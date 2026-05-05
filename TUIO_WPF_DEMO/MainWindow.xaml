@@ -1,0 +1,30 @@
+<Window x:Class="TUIO_WPF_DEMO.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TUIO Cooking Assistant" 
+        WindowState="Maximized"
+        Background="#000040">
+    <Grid>
+        <Canvas x:Name="MainCanvas">
+            <!-- TUIO Elements will be added here dynamically -->
+        </Canvas>
+
+        <!-- Context Display -->
+        <TextBlock x:Name="ContextDisplay" 
+                   Text="Context: Cooking Assistant" 
+                   Foreground="White" 
+                   FontSize="24" 
+                   FontWeight="Bold"
+                   HorizontalAlignment="Left" 
+                   VerticalAlignment="Bottom" 
+                   Margin="20"/>
+
+        <!-- Timer Dashboard -->
+        <Border Background="#AA000000" CornerRadius="15" Padding="15" Margin="20" HorizontalAlignment="Right" VerticalAlignment="Top">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="⏲️" FontSize="32" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBlock x:Name="TimerDisplay" Text="00:00" Foreground="#00FF00" FontSize="36" FontWeight="Bold" FontFamily="Consolas"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>
