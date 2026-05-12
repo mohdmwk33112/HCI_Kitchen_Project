@@ -8,6 +8,7 @@ using TUIO;
 using System.Net.Sockets; // Add this for TCP Sockets
 using System.Text;        // Add this for Encoding
 using System.Threading.Tasks; // Add this for Tasks
+using System.Text.Json; // Add this for JSON parsing
 
 namespace TUIO_WPF_DEMO
 {
@@ -63,7 +64,7 @@ namespace TUIO_WPF_DEMO
             {
                 // 1. Connect to the IP and Port from your lab code (localhost:5000)
                 pythonClient = new TcpClient();
-                await pythonClient.ConnectAsync("127.0.0.1", 5000);
+                await pythonClient.ConnectAsync("127.0.0.1", 65434);
                 stream = pythonClient.GetStream();
 
                 System.Diagnostics.Debug.WriteLine("Connected to Python Server!");
@@ -78,22 +79,157 @@ namespace TUIO_WPF_DEMO
 
         private void ListenToPython()
         {
-            byte[] buffer = new byte[1024];
-            while (pythonClient != null && pythonClient.Connected)
+            try
+            {
+                using (var reader = new System.IO.StreamReader(stream, Encoding.UTF8, true, 1024, true))
+                {
+                    while (pythonClient != null && pythonClient.Connected)
+                    {
+                        string message = reader.ReadLine();
+                        if (message == null) break; // Disconnected
+
+                        System.Diagnostics.Debug.WriteLine("Message from Python: " + message);
+                        
+                        // Process the message on the UI thread
+                        Dispatcher.Invoke(() => HandleServerMessage(message));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("Listen Error: " + ex.Message);
+            }
+        }
+
+        private void HandleServerMessage(string message)
+        {
+            if (message.StartsWith("{"))
+            {
+                // Parse JSON Gesture
+                try
+                {
+                    var gestureData = JsonSerializer.Deserialize<Dictionary<string, object>>(message);
+                    if (gestureData.ContainsKey("gesture"))
+                    {
+                        string gesture = gestureData["gesture"].ToString();
+                        double confidence = double.Parse(gestureData["confidence"].ToString());
+                        
+                        // Parse X and Y if available
+                        double normX = 0.5;
+                        double normY = 0.5;
+                        if (gestureData.ContainsKey("x") && gestureData.ContainsKey("y"))
+                        {
+                            normX = double.Parse(gestureData["x"].ToString());
+                            normY = double.Parse(gestureData["y"].ToString());
+                        }
+
+                        ContextDisplay.Text = $"Context: Gesture Detected -> {gesture} ({confidence})";
+                        
+                        // Log gesture to server DB
+                        SendToServer($"LOG;gesture;{{\"gesture\":\"{gesture}\"}}");
+
+                        // Add application logic for gestures here
+                        if (gesture == "Swipe Left") { /* Go to previous step */ }
+                        else if (gesture == "Swipe Right") { SendToServer("NEXT"); /* Go to next step */ }
+                        else if (gesture == "Click") { 
+                            // Emulate TUIO click logic or menu selection
+                            CheckMenuSelection((float)normX, (float)normY); 
+                        }
+                        else if (gesture == "Circle")
+                        {
+                            // Open circular menu at the hand cursor location
+                            if (cookingMenu == null)
+                            {
+                                cookingMenu = CreateCircularMenu();
+                                MainCanvas.Children.Add(cookingMenu);
+                                UpdateElementPosition(cookingMenu, (float)normX, (float)normY);
+                                
+                                double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
+                                double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
+                                menuFixedCenter = new Point(normX * canvasW, normY * canvasH);
+                            }
+                        }
+                        else if (gesture == "L Shape")
+                        {
+                            // Pause timers and ask for logout confirmation
+                            var result = MessageBox.Show(
+                                "Are you sure you want to log out?",
+                                "Logout Confirmation",
+                                MessageBoxButton.YesNo,
+                                MessageBoxImage.Question);
+                                
+                            if (result == MessageBoxResult.Yes)
+                            {
+                                ContextDisplay.Text = "Context: Logging out...";
+                                RemoveActiveMenu();
+                                SendToServer("LOGOUT");
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("JSON Error: " + ex.Message); }
+            }
+            else if (message.StartsWith("login_success"))
+            {
+                string[] parts = message.Split(';');
+                string userName = parts.Length > 1 ? parts[1] : "Unknown";
+                ContextDisplay.Text = $"Context: Welcome, {userName}!";
+                
+                // Example: Request Recipe ID 1 once logged in
+                SendToServer("RECIPE_ID;1");
+            }
+            else if (message.StartsWith("login_failed"))
+            {
+                ContextDisplay.Text = "Context: Face Login Failed. " + message;
+            }
+            else if (message.StartsWith("step"))
+            {
+                // Format: step;index;total;instruction
+                string[] parts = message.Split(';');
+                if (parts.Length >= 4)
+                {
+                    ContextDisplay.Text = $"Context: Step {parts[1]}/{parts[2]}: {parts[3]}";
+                }
+            }
+            else if (message == "session_done")
+            {
+                ContextDisplay.Text = "Context: Recipe Completed! Evaluation ready.";
+                // Submit mock evaluation
+                SendToServer("EVAL;300;0;20.5;Great recipe");
+            }
+            else if (message.StartsWith("logout_success"))
+            {
+                ContextDisplay.Text = "Context: Logged out successfully. Waiting for Face Login...";
+            }
+            else if (message.StartsWith("error"))
+            {
+                ContextDisplay.Text = "Context: Server Error - " + message;
+            }
+            else if (message.Contains(";") && !message.StartsWith("gestures_"))
+            {
+                // Handle recipe header (title;scenario;ingredients...)
+                string[] parts = message.Split(';');
+                ContextDisplay.Text = $"Context: Recipe '{parts[0]}' loaded.";
+                
+                // Automatically confirm to start receiving steps
+                SendToServer("CONFIRM");
+                
+                // Start gestures when cooking begins
+                SendToServer("START_GESTURES");
+            }
+        }
+
+        private void SendToServer(string message)
+        {
+            if (pythonClient != null && pythonClient.Connected && stream != null)
             {
                 try
                 {
-                    int bytesRead = stream.Read(buffer, 0, buffer.Length);
-                    if (bytesRead > 0)
-                    {
-                        string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                        System.Diagnostics.Debug.WriteLine("Message from Python: " + message);
-
-                        // You can update your UI or handle database data here
-                        if (message == "q") { /* Handle disconnect */ }
-                    }
+                    byte[] data = Encoding.UTF8.GetBytes(message + "\n");
+                    stream.Write(data, 0, data.Length);
+                    System.Diagnostics.Debug.WriteLine("Sent to Python: " + message);
                 }
-                catch { break; }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("Send Error: " + ex.Message); }
             }
         }
 
