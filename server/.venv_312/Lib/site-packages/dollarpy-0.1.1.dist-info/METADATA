@@ -1,0 +1,23 @@
+Metadata-Version: 2.0
+Name: dollarpy
+Version: 0.1.1
+Summary: A python imlementation of the $P Point-Cloud Recognizer
+Home-page: https://github.com/sonovice/dollarpy
+Author: Simon Waloschek
+Author-email: simon.waloschek@posteo.de
+License: LGPLv3+
+Keywords: gesture
+Platform: UNKNOWN
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)
+Classifier: Programming Language :: Python :: 2
+Classifier: Programming Language :: Python :: 2.7
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.3
+Classifier: Programming Language :: Python :: 3.4
+Classifier: Programming Language :: Python :: 3.5
+
+UNKNOWN
+
+

@@ -1,0 +1,126 @@
+import cv2
+import time
+import json
+from threading import Thread
+from face.face_handler import FaceHandler
+from gestures.hand_gestures import GestureHandler
+
+class VisionManager:
+    def __init__(self, people_dir, conn):
+        self.conn = conn
+        self.face_handler = FaceHandler(people_dir)
+        self.gesture_handler = GestureHandler()
+        
+        self.state = "LOGIN"  # States: LOGIN, GESTURES
+        self.running = False
+        self.confirmations_needed = 5
+        self.confirmation_counts = {}
+        self.last_name = None
+        self.current_user = None
+
+    def start(self):
+        self.running = True
+        Thread(target=self._camera_loop, daemon=True).start()
+
+    def set_state(self, new_state):
+        print(f"[VisionManager] State changed to: {new_state}")
+        self.state = new_state
+        if new_state == "LOGIN":
+            self.current_user = None
+            self.confirmation_counts = {}
+            self.last_name = None
+
+    def _camera_loop(self):
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            print("Error: Cannot open webcam.")
+            self.conn.sendall("error;no_camera\n".encode("utf-8"))
+            return
+
+        print("[VisionManager] Camera loop started.")
+
+        try:
+            while self.running:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                frame = cv2.flip(frame, 1)  # Mirror
+                timestamp_ms = int(time.time() * 1000)
+
+                if self.state == "LOGIN":
+                    self._process_login(frame)
+                elif self.state == "GESTURES":
+                    self._process_gestures(frame, timestamp_ms)
+
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    self.running = False
+                    break
+
+        except Exception as e:
+            print(f"[VisionManager] Error: {e}")
+        finally:
+            cap.release()
+            cv2.destroyAllWindows()
+            print("[VisionManager] Camera loop ended.")
+
+    def _process_login(self, frame):
+        face_results = self.face_handler.identify_face(frame)
+        current_name = None
+        current_confidence = 0.0
+
+        if face_results:
+            current_name, current_confidence = face_results[0]
+            if current_name == "Unknown":
+                current_name = None
+
+        if current_name:
+            label = f"{current_name} ({current_confidence:.1f}%)"
+            color = (0, 255, 0)
+            
+            if current_name == self.last_name:
+                self.confirmation_counts[current_name] = self.confirmation_counts.get(current_name, 0) + 1
+            else:
+                self.confirmation_counts = {current_name: 1}
+                self.last_name = current_name
+
+            count = self.confirmation_counts[current_name]
+            
+            if count >= self.confirmations_needed:
+                print(f"Login confirmed: {current_name} at {current_confidence:.1f}%")
+                self.current_user = current_name
+                self.conn.sendall(f"login_success;{current_name}\n".encode("utf-8"))
+                self.set_state("GESTURES")
+        else:
+            label = "Scanning for faces..."
+            color = (0, 0, 255)
+            self.last_name = None
+            self.confirmation_counts = {}
+
+        cv2.putText(frame, label, (30, 40), cv2.FONT_HERSHEY_DUPLEX, 1.0, color, 2)
+        cv2.imshow("Kitchen Assistant - Vision", frame)
+
+    def _process_gestures(self, frame, timestamp_ms):
+        # Pass frame to gesture handler
+        result = self.gesture_handler.process_frame(frame, timestamp_ms)
+        
+        # Draw HUD
+        cv2.putText(frame, f"User: {self.current_user}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+        cv2.putText(frame, "Gestures Active", (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+        
+        if result:
+            # result is a dict: {"gesture": name, "confidence": conf, "x": x, "y": y}
+            payload = json.dumps(result)
+            try:
+                self.conn.sendall((payload + "\n").encode("utf-8"))
+                print(f"Sent Gesture: {payload}")
+                
+                # If L Shape, handle logout on server side too
+                if result.get("gesture") == "L Shape":
+                    # We wait for client to send LOGOUT command after confirmation,
+                    # or we can force it here. Since client has confirmation, we just wait.
+                    pass
+            except Exception as e:
+                print(f"Failed to send gesture: {e}")
+
+        cv2.imshow("Kitchen Assistant - Vision", frame)
