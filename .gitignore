@@ -4,9 +4,45 @@
 [Oo]bj/
 *.user
 *.suo
+# IDEs
+.vs/
+.vscode/
+.idea/
+
+# Visual Studio / C#
+bin/
+obj/
+*.user
+*.suo
 *.userosscache
 *.sln.docstates
+*.pdb
+*.cache
+*.opendb
 
 # TUIO / General
 __MACOSX/
 *.log
+
+# Virtual environments
+**/venv/
+**/.venv*/
+server/.venv_312/
+
+# Python cache (anywhere in project)
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Databases
+*.db
+*.sqlite3
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -3,6 +3,7 @@ import time
 import json
 from threading import Thread
 from face.face_handler import FaceHandler
+from face.emotion_handler import EmotionHandler
 from gestures.hand_gestures import GestureHandler
 
 class VisionManager:
@@ -10,6 +11,7 @@ class VisionManager:
         self.conn = conn
         self.face_handler = FaceHandler(people_dir)
         self.gesture_handler = GestureHandler()
+        self.emotion_handler = EmotionHandler(analysis_interval=30.0)
         
         self.state = "LOGIN"  # States: LOGIN, GESTURES
         self.running = False
@@ -103,10 +105,21 @@ class VisionManager:
     def _process_gestures(self, frame, timestamp_ms):
         # Pass frame to gesture handler
         result = self.gesture_handler.process_frame(frame, timestamp_ms)
+
+        # Detect Emotion (Only in GESTURES state, after login)
+        emotion = self.emotion_handler.analyze_emotion(frame)
         
         # Draw HUD
         cv2.putText(frame, f"User: {self.current_user}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
-        cv2.putText(frame, "Gestures Active", (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+        cv2.putText(frame, f"Emotion: {emotion}", (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 100, 0), 2)
+        cv2.putText(frame, "Gestures Active", (10, 86), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+        
+        # Send Emotion to Client
+        try:
+            emotion_payload = json.dumps({"type": "emotion", "value": emotion})
+            self.conn.sendall((emotion_payload + "\n").encode("utf-8"))
+        except Exception as e:
+            print(f"Failed to send emotion: {e}")
         
         if result:
             # result is a dict: {"gesture": name, "confidence": conf, "x": x, "y": y}
