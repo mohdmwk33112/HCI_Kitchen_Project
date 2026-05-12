@@ -1,5 +1,6 @@
 import os
 import conn
+import json
 from conn import connect_to_server, receive_messages
 from core.vision_manager import VisionManager
 from cooking.cooking_session import send_recipe
@@ -15,8 +16,6 @@ def handle_client():
     print("Unified connection established.")
 
     # ── 2. Start the Continuous Vision Manager ─────────────────────────────
-    # VisionManager runs cv2.VideoCapture(0) continuously.
-    # Starts in 'LOGIN' state, automatically switches to 'GESTURES' upon success.
     vision = VisionManager(PEOPLE_DIR, conn_obj)
     vision.start()
 
@@ -38,15 +37,37 @@ def handle_client():
                 conn_obj.sendall("logout_success\n".encode("utf-8"))
 
             elif cmd == "START_GESTURES":
-                # With continuous vision, gestures start automatically after login.
-                # But client might send this as a confirmation.
                 print("Gestures mode confirmed by client.")
                 vision.set_state("GESTURES")
                 conn_obj.sendall("gestures_started\n".encode("utf-8"))
 
+            # ── Circular Menu State Control ────────────────────────────
+            elif cmd == "MENU_OPEN":
+                print("[Server] Circular menu opened — suppressing camera gestures.")
+                vision.set_state("CIRCULAR_MENU")
+                conn_obj.sendall("menu_open_ack\n".encode("utf-8"))
+
+            elif cmd == "MENU_CLOSED":
+                print("[Server] Circular menu closed — resuming camera gestures.")
+                vision.set_state("GESTURES")
+                conn_obj.sendall("menu_closed_ack\n".encode("utf-8"))
+
             # ── Recipe / Cooking Session ───────────────────────────────
             elif cmd == "RECIPE_ID":
+                # Note: send_recipe takes over the receive_messages loop until recipe is done
                 send_recipe(conn_obj, parts)
+                # After recipe is done, we return here to the main loop
+
+            # ── Passive/Global Commands (Acknowledge to avoid errors) ──
+            elif cmd == "LOG":
+                # Already handled inside send_recipe for active sessions,
+                # but if sent globally, we just acknowledge or log to console.
+                print(f"[Server] Global Log: {parts[1] if len(parts) > 1 else ''}")
+            
+            elif cmd == "NEXT":
+                # Handled inside send_recipe's _send_steps loop.
+                # If it reaches here, no recipe is active.
+                print("[Server] NEXT received but no recipe session is active.")
 
             # ── Graceful shutdown ──────────────────────────────────────
             elif cmd == "Q":

@@ -1,5 +1,6 @@
 import cv2
 import time
+import threading
 from deepface import DeepFace
 import numpy as np
 
@@ -12,34 +13,38 @@ class EmotionHandler:
         self.analysis_interval = analysis_interval
         self.last_analysis_time = 0
         self.last_emotion = "Neutral"
+        self._analyzing = False
 
     def analyze_emotion(self, frame):
         """
-        Analyzes the frame for facial expressions/emotions.
-        Returns the dominant emotion if the interval has passed, otherwise returns the last detected emotion.
+        Non-blocking emotion analysis.
+        Runs DeepFace in a background thread to prevent camera lag.
         """
         current_time = time.time()
         
-        # Rate limiting to avoid blocking the main vision thread
+        if self._analyzing:
+            return self.last_emotion
+
         if current_time - self.last_analysis_time < self.analysis_interval:
             return self.last_emotion
 
-        try:
-            # DeepFace.analyze expects BGR image (OpenCV default)
-            # actions=['emotion'] detects happy, sad, angry, etc.
-            # enforce_detection=False prevents it from throwing an exception if no face is found
-            results = DeepFace.analyze(frame, actions=['emotion'], enforce_detection=False)
-            
-            if results:
-                # results is a list of dicts (one for each face detected)
-                # We'll take the first face detected
-                self.last_emotion = results[0]['dominant_emotion']
-                self.last_analysis_time = current_time
-                print(f"[EmotionHandler] Detected: {self.last_emotion}")
-                
-        except Exception as e:
-            print(f"[EmotionHandler] Error during analysis: {e}")
-            # We don't update last_analysis_time on error to retry sooner if needed, 
-            # but we keep the last_emotion to avoid flickering.
+        # Dispatch analysis to background thread
+        def _run_analysis(img_copy):
+            try:
+                self._analyzing = True
+                # DeepFace.analyze expects BGR image (OpenCV default)
+                results = DeepFace.analyze(img_copy, actions=['emotion'], enforce_detection=False)
+                if results:
+                    self.last_emotion = results[0]['dominant_emotion']
+                    print(f"[EmotionHandler] Detected: {self.last_emotion}")
+            except Exception as e:
+                print(f"[EmotionHandler] Error: {e}")
+            finally:
+                self._analyzing = False
+                self.last_analysis_time = time.time()
+
+        # Copy the frame so the thread has its own data
+        thread = threading.Thread(target=_run_analysis, args=(frame.copy(),), daemon=True)
+        thread.start()
             
         return self.last_emotion

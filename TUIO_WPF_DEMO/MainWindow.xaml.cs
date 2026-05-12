@@ -37,6 +37,11 @@ namespace TUIO_WPF_DEMO
         private System.Windows.Threading.DispatcherTimer kitchenTimer;
         private int remainingSeconds = 0;
 
+        // --- Camera & State Management ---
+        private bool _isMenuOpen = false;
+        private Ellipse cameraPointer; // Visual representation of the camera index finger
+        private double lastCamX = 0, lastCamY = 0;
+
         public MainWindow()
         {
             // Register encoding for TUIO protocol compatibility
@@ -105,66 +110,50 @@ namespace TUIO_WPF_DEMO
         {
             if (message.StartsWith("{"))
             {
-                // Parse JSON Gesture
                 try
                 {
-                    var gestureData = JsonSerializer.Deserialize<Dictionary<string, object>>(message);
-                    if (gestureData.ContainsKey("gesture"))
+                    var data = JsonSerializer.Deserialize<Dictionary<string, object>>(message);
+                    
+                    // 1. Handle Continuous Pointer Tracking
+                    if (data.ContainsKey("type") && data["type"].ToString() == "pointer")
                     {
-                        string gesture = gestureData["gesture"].ToString();
-                        double confidence = double.Parse(gestureData["confidence"].ToString());
+                        double x = double.Parse(data["x"].ToString());
+                        double y = double.Parse(data["y"].ToString());
+                        lastCamX = x; lastCamY = y;
+
+                        Dispatcher.Invoke(() => {
+                            UpdateCameraPointer(x, y);
+                            if (_isMenuOpen)
+                            {
+                                CheckMenuSelection((float)x, (float)y);
+                            }
+                        });
+                        return;
+                    }
+
+                    // 2. Handle Discrete Gestures (Only if menu is closed)
+                    if (data.ContainsKey("gesture"))
+                    {
+                        if (_isMenuOpen) return; // Suppress camera gestures while menu is open
+
+                        string gesture = data["gesture"].ToString();
+                        double confidence = double.Parse(data["confidence"].ToString());
                         
-                        // Parse X and Y if available
-                        double normX = 0.5;
-                        double normY = 0.5;
-                        if (gestureData.ContainsKey("x") && gestureData.ContainsKey("y"))
+                        double normX = lastCamX; // Use last known pointer pos for context
+                        double normY = lastCamY;
+                        if (data.ContainsKey("x") && data.ContainsKey("y"))
                         {
-                            normX = double.Parse(gestureData["x"].ToString());
-                            normY = double.Parse(gestureData["y"].ToString());
+                            normX = double.Parse(data["x"].ToString());
+                            normY = double.Parse(data["y"].ToString());
                         }
 
-                        ContextDisplay.Text = $"Context: Gesture Detected -> {gesture} ({confidence})";
-                        
-                        // Log gesture to server DB
-                        SendToServer($"LOG;gesture;{{\"gesture\":\"{gesture}\"}}");
-
-                        // Add application logic for gestures here
-                        if (gesture == "Swipe Left") { /* Go to previous step */ }
-                        else if (gesture == "Swipe Right") { SendToServer("NEXT"); /* Go to next step */ }
-                        else if (gesture == "Click") { 
-                            // Emulate TUIO click logic or menu selection
-                            CheckMenuSelection((float)normX, (float)normY); 
-                        }
-                        else if (gesture == "Circle")
-                        {
-                            // Open circular menu at the hand cursor location
-                            if (cookingMenu == null)
-                            {
-                                cookingMenu = CreateCircularMenu();
-                                MainCanvas.Children.Add(cookingMenu);
-                                UpdateElementPosition(cookingMenu, (float)normX, (float)normY);
-                                
-                                double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
-                                double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
-                                menuFixedCenter = new Point(normX * canvasW, normY * canvasH);
-                            }
-                        }
-                        else if (gesture == "L Shape")
-                        {
-                            // Pause timers and ask for logout confirmation
-                            var result = MessageBox.Show(
-                                "Are you sure you want to log out?",
-                                "Logout Confirmation",
-                                MessageBoxButton.YesNo,
-                                MessageBoxImage.Question);
-                                
-                            if (result == MessageBoxResult.Yes)
-                            {
-                                ContextDisplay.Text = "Context: Logging out...";
-                                RemoveActiveMenu();
-                                SendToServer("LOGOUT");
-                            }
-                        }
+                        Dispatcher.Invoke(() => {
+                            ContextDisplay.Text = $"Context: Gesture -> {gesture} ({confidence})";
+                            if (gesture == "Swipe Left") { /* Prev Step logic */ }
+                            else if (gesture == "Swipe Right") { SendToServer("NEXT"); }
+                            else if (gesture == "Click") { CheckMenuSelection((float)normX, (float)normY); }
+                            else if (gesture == "Circle") { OpenCircularMenu(normX, normY); }
+                        });
                     }
                 }
                 catch (Exception ex) { System.Diagnostics.Debug.WriteLine("JSON Error: " + ex.Message); }
@@ -219,6 +208,60 @@ namespace TUIO_WPF_DEMO
             }
         }
 
+        private void UpdateCameraPointer(double normX, double normY)
+        {
+            if (cameraPointer == null)
+            {
+                cameraPointer = new Ellipse { 
+                    Width = 40, Height = 40, 
+                    Stroke = Brushes.Cyan, StrokeThickness = 3,
+                    Fill = new SolidColorBrush(Color.FromArgb(100, 0, 255, 255)),
+                    IsHitTestVisible = false
+                };
+                MainCanvas.Children.Add(cameraPointer);
+            }
+            cameraPointer.Visibility = Visibility.Visible;
+            UpdateElementPosition(cameraPointer, (float)normX, (float)normY);
+        }
+
+        private void OpenCircularMenu(double x, double y)
+        {
+            if (_isMenuOpen) return;
+            _isMenuOpen = true;
+            SendToServer("MENU_OPEN");
+            cookingMenu = CreateCircularMenu();
+            MainCanvas.Children.Add(cookingMenu);
+            UpdateElementPosition(cookingMenu, (float)x, (float)y);
+            
+            double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
+            double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
+            menuFixedCenter = new Point(x * canvasW, y * canvasH);
+            
+            // Highlight existing cursors
+            foreach(var el in cursorElements.Values) {
+                if (el is Grid g && g.Children[0] is Shape s) {
+                    s.Stroke = Brushes.Gold;
+                    s.StrokeThickness = 4;
+                }
+            }
+        }
+
+        private void CloseCircularMenu()
+        {
+            if (!_isMenuOpen) return;
+            _isMenuOpen = false;
+            SendToServer("MENU_CLOSED");
+            RemoveActiveMenu();
+            
+            // Reset cursors
+            foreach(var el in cursorElements.Values) {
+                if (el is Grid g && g.Children[0] is Shape s) {
+                    s.Stroke = Brushes.Blue;
+                    s.StrokeThickness = 2;
+                }
+            }
+        }
+
         private void SendToServer(string message)
         {
             if (pythonClient != null && pythonClient.Connected && stream != null)
@@ -237,7 +280,11 @@ namespace TUIO_WPF_DEMO
         public void addTuioCursor(TuioCursor c)
         {
             Dispatcher.Invoke(() => {
-                Grid container = CreateContainer(20, 20, Brushes.Magenta, Brushes.Blue, true, c.CursorID.ToString());
+                // If menu is open, TUIO cursors become selection pointers (Gold rings)
+                Brush fill = _isMenuOpen ? Brushes.White : Brushes.Magenta;
+                Brush stroke = _isMenuOpen ? Brushes.Gold : Brushes.Blue;
+                
+                Grid container = CreateContainer(25, 25, fill, stroke, true, "");
                 cursorElements[c.SessionID] = container;
                 MainCanvas.Children.Add(container);
                 UpdateElementPosition(container, c.X, c.Y);
@@ -608,7 +655,7 @@ namespace TUIO_WPF_DEMO
         private void HandleInnerSelection(int index)
         {
             string label = innerSegmentList[index].Tag.ToString();
-            if (label == "EXIT") RemoveActiveMenu();
+            if (label == "EXIT") CloseCircularMenu();
             else if (label == "Timer" || label == "Heat" || label == "Recipes") ShowOuterRing(label);
         }
 

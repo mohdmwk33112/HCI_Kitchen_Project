@@ -52,13 +52,16 @@ class GestureHandler:
 
     def process_frame(self, frame, timestamp_ms):
         """
-        Processes a single frame. Returns a dictionary if a gesture is detected, else None.
-        e.g., {"gesture": "Swipe Left", "confidence": 0.85, "x": 0.5, "y": 0.5}
+        Processes a single frame. 
+        Returns a tuple: (gesture_payload, pointer_data)
+        gesture_payload: {"gesture": name, "confidence": conf, "x": x, "y": y} or None
+        pointer_data: {"x": x, "y": y} or None
         """
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
 
-        result_payload = None
+        gesture_payload = None
+        pointer_data = None
 
         try:
             hand_result = self.landmarker.detect_for_video(mp_image, timestamp_ms)
@@ -75,6 +78,10 @@ class GestureHandler:
                     pinky_tip  = hand_landmarks[20]
                     pinky_pip  = hand_landmarks[18]
 
+                    # ── Pointer Tracking (Index Finger) ──
+                    # Always track the index tip position
+                    pointer_data = {"x": round(index_tip.x, 3), "y": round(index_tip.y, 3)}
+
                     h, w, _ = frame.shape
                     cx, cy = int(index_tip.x * w), int(index_tip.y * h)
 
@@ -89,7 +96,7 @@ class GestureHandler:
 
                     drawing_pose = (idx_tip_dist > idx_pip_dist) and (mid_tip_dist < mid_pip_dist)
 
-                    # Fist detection (Loosened to 0.95 to be more forgiving)
+                    # Fist detection
                     FIST_RATIO = 0.95
                     closed_fist = (
                         (idx_tip_dist  / idx_pip_dist)  < FIST_RATIO and
@@ -103,11 +110,9 @@ class GestureHandler:
                     now = time.time()
                     if pinch_dist < self.PINCH_THRESHOLD and not closed_fist and (now - self.last_click_time) > self.CLICK_COOLDOWN:
                         self.last_click_time = now
-                        
                         mid_x = (thumb_tip.x + index_tip.x) / 2
                         mid_y = (thumb_tip.y + index_tip.y) / 2
-                        result_payload = {"gesture": "Click", "confidence": 1.0, "x": round(mid_x, 3), "y": round(mid_y, 3)}
-                        
+                        gesture_payload = {"gesture": "Click", "confidence": 1.0, "x": round(mid_x, 3), "y": round(mid_y, 3)}
                         cv2.circle(frame, (int(mid_x * w), int(mid_y * h)), 14, (0, 215, 255), cv2.FILLED)
 
                     # ── Drawing & Recognition ──
@@ -122,13 +127,11 @@ class GestureHandler:
                             self.smooth_y = self.alpha * index_tip.y + (1 - self.alpha) * self.smooth_y
                         
                         self.live_points.append(Point(self.smooth_x, self.smooth_y, 1))
-                        
                         px, py = int(self.smooth_x * w), int(self.smooth_y * h)
                         cv2.circle(frame, (px, py), 10, (0, 255, 0), cv2.FILLED)
                     else:
                         if self.is_drawing:
                             self.drawing_lost_frames += 1
-                            # Allow up to 15 frames of tracking loss before resetting the stroke
                             if self.drawing_lost_frames > 15:
                                 self.is_drawing = False
                                 self.smooth_x, self.smooth_y = None, None
@@ -137,10 +140,8 @@ class GestureHandler:
                             res = self.recognizer.recognize(self.live_points)
                             if res:
                                 g_name, conf = res
-                                print(f"[Gesture Debug] Drew shape. Best match: {g_name} ({conf:.2f})")
-                                if conf >= self.CONFIDENCE_THRESHOLD and not result_payload:
-                                    # Output the coordinates of the fist/index for the payload
-                                    result_payload = {"gesture": g_name, "confidence": round(conf, 2), "x": round(index_tip.x, 3), "y": round(index_tip.y, 3)}
+                                if conf >= self.CONFIDENCE_THRESHOLD:
+                                    gesture_payload = {"gesture": g_name, "confidence": round(conf, 2), "x": round(index_tip.x, 3), "y": round(index_tip.y, 3)}
                             self.live_points.clear()
                             self.is_drawing = False
                         
@@ -149,4 +150,4 @@ class GestureHandler:
         except Exception as e:
             print(f"[GestureHandler] Error: {e}")
 
-        return result_payload
+        return gesture_payload, pointer_data

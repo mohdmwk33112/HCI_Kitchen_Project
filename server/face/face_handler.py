@@ -23,12 +23,15 @@ class FaceHandler:
             try:
                 name = os.path.splitext(os.path.basename(image_path))[0]
 
-                image = cv2.imread(image_path)
-                if image is None:
-                    print(f"  Error: Could not read {image_path}")
-                    continue
-
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                # Use face_recognition's own loader (PIL-based)
+                # Then explicitly convert to RGB 8-bit to satisfy dlib
+                image = face_recognition.load_image_file(image_path)
+                
+                # Force RGB (remove alpha channel if present)
+                if image.shape[2] == 4:
+                    image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
+                elif len(image.shape) == 2:
+                    image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
 
                 # Downscale large images — dlib works best under 800px wide
                 h, w = image.shape[:2]
@@ -36,7 +39,7 @@ class FaceHandler:
                     scale = 800 / w
                     image = cv2.resize(image, (800, int(h * scale)))
 
-                # C-contiguous uint8 required by dlib (NumPy 1.x compatibility)
+                # FINAL SANITY CHECK: uint8 and C-contiguous is MANDATORY for dlib
                 image = np.ascontiguousarray(image, dtype=np.uint8)
 
                 encodings = face_recognition.face_encodings(image)
@@ -55,19 +58,26 @@ class FaceHandler:
         print(f"Total faces loaded: {len(self.known_face_names)}")
 
     # Distance threshold: lower = stricter. 0.45 is high confidence.
-    # 0.6 is the library default (too loose). Tune this if needed.
     CONFIDENCE_THRESHOLD = 0.45
 
     def identify_face(self, frame):
         """
         Identifies faces in a single frame.
-        Returns list of (name, confidence_pct) tuples.
-        Only returns a name if face distance is below CONFIDENCE_THRESHOLD.
         """
+        if frame is None:
+            return []
+            
+        # DroidCam / IP-cam often sends weird channel counts
+        # Normalize to 3-channel BGR first if needed
+        if frame.ndim == 2:
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        elif frame.shape[2] == 4:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+
         small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
-        rgb_small_frame = np.ascontiguousarray(
-            cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB), dtype=np.uint8
-        )
+        # Convert BGR (OpenCV) to RGB (face_recognition)
+        rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+        rgb_small_frame = np.ascontiguousarray(rgb_small_frame, dtype=np.uint8)
 
         face_locations = face_recognition.face_locations(rgb_small_frame)
         face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
@@ -83,7 +93,6 @@ class FaceHandler:
             best_index = np.argmin(face_distances)
             best_distance = face_distances[best_index]
 
-            # Convert distance to a 0-100% confidence score
             confidence_pct = max(0.0, (1.0 - best_distance) * 100)
 
             if best_distance < self.CONFIDENCE_THRESHOLD:
@@ -94,4 +103,3 @@ class FaceHandler:
             results.append((name, confidence_pct))
 
         return results
-

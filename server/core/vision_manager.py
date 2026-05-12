@@ -13,7 +13,7 @@ class VisionManager:
         self.gesture_handler = GestureHandler()
         self.emotion_handler = EmotionHandler(analysis_interval=30.0)
         
-        self.state = "LOGIN"  # States: LOGIN, GESTURES
+        self.state = "LOGIN"  # States: LOGIN, GESTURES, CIRCULAR_MENU
         self.running = False
         self.confirmations_needed = 5
         self.confirmation_counts = {}
@@ -33,9 +33,21 @@ class VisionManager:
             self.last_name = None
 
     def _camera_loop(self):
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            print("Error: Cannot open webcam.")
+        # Auto-detect camera (tries index 0 then 1 then 2)
+        cap = None
+        for i in range(5):
+            print(f"[VisionManager] Probing camera index {i}...")
+            test_cap = cv2.VideoCapture(i)
+            if test_cap.isOpened():
+                ret, frame = test_cap.read()
+                if ret and frame is not None:
+                    cap = test_cap
+                    print(f"[VisionManager] Successfully opened camera index {i}")
+                    break
+            test_cap.release()
+
+        if cap is None:
+            print("Error: Cannot open any camera.")
             self.conn.sendall("error;no_camera\n".encode("utf-8"))
             return
 
@@ -44,8 +56,14 @@ class VisionManager:
         try:
             while self.running:
                 ret, frame = cap.read()
-                if not ret:
-                    break
+                if not ret or frame is None:
+                    time.sleep(0.01)
+                    continue
+
+                if frame.ndim == 2:  # Grayscale
+                    frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+                elif frame.shape[2] == 4:  # BGRA
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
                 frame = cv2.flip(frame, 1)  # Mirror
                 timestamp_ms = int(time.time() * 1000)
@@ -54,15 +72,18 @@ class VisionManager:
                     self._process_login(frame)
                 elif self.state == "GESTURES":
                     self._process_gestures(frame, timestamp_ms)
+                elif self.state == "CIRCULAR_MENU":
+                    # While menu is open, we skip gesture events but still send pointer tracking
+                    self._process_gestures(frame, timestamp_ms, suppress_gestures=True)
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     self.running = False
                     break
 
         except Exception as e:
-            print(f"[VisionManager] Error: {e}")
+            print(f"[VisionManager] Camera loop error: {e}")
         finally:
-            cap.release()
+            if cap: cap.release()
             cv2.destroyAllWindows()
             print("[VisionManager] Camera loop ended.")
 
@@ -102,9 +123,9 @@ class VisionManager:
         cv2.putText(frame, label, (30, 40), cv2.FONT_HERSHEY_DUPLEX, 1.0, color, 2)
         cv2.imshow("Kitchen Assistant - Vision", frame)
 
-    def _process_gestures(self, frame, timestamp_ms):
+    def _process_gestures(self, frame, timestamp_ms, suppress_gestures=False):
         # Pass frame to gesture handler
-        result = self.gesture_handler.process_frame(frame, timestamp_ms)
+        gesture_payload, pointer_data = self.gesture_handler.process_frame(frame, timestamp_ms)
 
         # Detect Emotion (Only in GESTURES state, after login)
         emotion = self.emotion_handler.analyze_emotion(frame)
@@ -112,28 +133,34 @@ class VisionManager:
         # Draw HUD
         cv2.putText(frame, f"User: {self.current_user}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
         cv2.putText(frame, f"Emotion: {emotion}", (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 100, 0), 2)
-        cv2.putText(frame, "Gestures Active", (10, 86), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
         
-        # Send Emotion to Client
+        if suppress_gestures:
+            cv2.putText(frame, "[ MENU OPEN - Gestures Paused ]", (10, 86), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 200, 255), 2)
+        else:
+            cv2.putText(frame, "Gestures Active", (10, 86), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+        
+        # 1. Send Pointer Data (Index finger tracking) - Send every frame if available
+        if pointer_data:
+            try:
+                pointer_payload = json.dumps({"type": "pointer", "x": pointer_data["x"], "y": pointer_data["y"]})
+                self.conn.sendall((pointer_payload + "\n").encode("utf-8"))
+            except Exception as e:
+                print(f"Failed to send pointer: {e}")
+
+        # 2. Send Gesture Data - Skip if in CIRCULAR_MENU state
+        if gesture_payload and not suppress_gestures:
+            payload = json.dumps(gesture_payload)
+            try:
+                self.conn.sendall((payload + "\n").encode("utf-8"))
+                print(f"Sent Gesture: {payload}")
+            except Exception as e:
+                print(f"Failed to send gesture: {e}")
+
+        # 3. Send Emotion to Client
         try:
             emotion_payload = json.dumps({"type": "emotion", "value": emotion})
             self.conn.sendall((emotion_payload + "\n").encode("utf-8"))
         except Exception as e:
             print(f"Failed to send emotion: {e}")
-        
-        if result:
-            # result is a dict: {"gesture": name, "confidence": conf, "x": x, "y": y}
-            payload = json.dumps(result)
-            try:
-                self.conn.sendall((payload + "\n").encode("utf-8"))
-                print(f"Sent Gesture: {payload}")
-                
-                # If L Shape, handle logout on server side too
-                if result.get("gesture") == "L Shape":
-                    # We wait for client to send LOGOUT command after confirmation,
-                    # or we can force it here. Since client has confirmation, we just wait.
-                    pass
-            except Exception as e:
-                print(f"Failed to send gesture: {e}")
 
         cv2.imshow("Kitchen Assistant - Vision", frame)
