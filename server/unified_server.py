@@ -58,6 +58,14 @@ def handle_client():
                 conn_obj.sendall("menu_closed_ack\n".encode("utf-8"))
 
             # ── Recipe / Cooking Session ───────────────────────────────
+            elif cmd == "GET_SUGGESTION":
+                from datetime import datetime
+                hour = datetime.now().hour
+                if 5 <= hour < 12: sugg_id, sugg_name = 1, "Omelette"
+                elif 12 <= hour < 21: sugg_id, sugg_name = 2, "Pizza"
+                else: sugg_id, sugg_name = 4, "Cake"
+                conn_obj.sendall(f"suggestion;{sugg_id};{sugg_name}\n".encode("utf-8"))
+
             elif cmd == "RECIPE_ID":
                 # Note: send_recipe takes over the receive_messages loop until recipe is done
                 send_recipe(conn_obj, parts, vision)

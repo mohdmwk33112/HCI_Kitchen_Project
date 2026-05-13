@@ -18,6 +18,7 @@ class VisionManager:
         self.gesture_handler = GestureHandler()
         self.emotion_handler = EmotionHandler(analysis_interval=15.0)
         self.ingredient_detector = IngredientDetector("yolo11n.pt")
+        self.gaze_handler = GazeHandler("face_landmarker.task")
 
 
         

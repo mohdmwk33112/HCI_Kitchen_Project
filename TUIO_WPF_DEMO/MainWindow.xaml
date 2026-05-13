@@ -15,6 +15,33 @@
                    VerticalAlignment="Bottom" 
                    Margin="20"/>
 
+        <!-- Recipe Overview Panel -->
+        <Border x:Name="RecipePanel" Visibility="Collapsed" Background="#CC111111" CornerRadius="20" Padding="25" Margin="40"
+                BorderBrush="Gold" BorderThickness="2" MaxWidth="600" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <StackPanel>
+                <TextBlock x:Name="RecipeTitleText" Text="Recipe Title" Foreground="Gold" FontSize="36" FontWeight="Bold" Margin="0,0,0,10"/>
+                <TextBlock x:Name="RecipeOverviewText" Text="Overview text..." Foreground="White" FontSize="20" TextWrapping="Wrap" Margin="0,0,0,20"/>
+                <TextBlock Text="INGREDIENTS" Foreground="#AAAAAA" FontSize="16" FontWeight="Bold" Margin="0,0,0,5"/>
+                <TextBlock x:Name="RecipeIngredientsText" Text="• Ing 1" Foreground="White" FontSize="18" LineHeight="28" TextWrapping="Wrap" Margin="0,0,0,20"/>
+                <Border Background="#444444" CornerRadius="10" Padding="10">
+                    <TextBlock Text="🔄 Rotate TUIO Right to Start Cooking" Foreground="Cyan" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center"/>
+                </Border>
+            </StackPanel>
+        </Border>
+
+        <!-- Step-by-Step Instruction Panel -->
+        <Border x:Name="StepPanel" Visibility="Collapsed" Background="#CC002040" CornerRadius="20" Padding="30" Margin="40"
+                BorderBrush="Cyan" BorderThickness="3" MaxWidth="800" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <StackPanel>
+                <TextBlock x:Name="StepNumberText" Text="STEP 1 OF 5" Foreground="Cyan" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,20"/>
+                <TextBlock x:Name="StepInstructionText" Text="Instruction goes here..." Foreground="White" FontSize="32" FontWeight="SemiBold" TextWrapping="Wrap" TextAlignment="Center" Margin="0,0,0,30"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock x:Name="PrevStepHint" Text="⬅️ Swipe Left for Previous" Foreground="#88FFFFFF" FontSize="14" Margin="10,0"/>
+                    <TextBlock x:Name="NextStepHint" Text="Swipe Right for Next ➡️" Foreground="#88FFFFFF" FontSize="14" Margin="10,0"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
         <!-- Timer Dashboard -->
         <Border x:Name="TimerDashboard" Background="#AA000000" CornerRadius="15" Padding="15" Margin="20" HorizontalAlignment="Right" VerticalAlignment="Top">
             <StackPanel Orientation="Horizontal">

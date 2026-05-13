@@ -43,6 +43,8 @@ namespace TUIO_WPF_DEMO
         // --- Camera & State Management ---
         private bool _isMenuOpen = false;
         private bool _isLogoutPopupOpen = false;
+        private bool _showRecipeCard = false;
+        private bool _isCooking = false; // Prevents overview card from appearing during steps
         private Ellipse cameraPointer; // Visual representation of the camera index finger
         private double lastCamX = 0, lastCamY = 0;
         private string _userSide = "Left"; // Default
@@ -160,7 +162,7 @@ namespace TUIO_WPF_DEMO
 
                         Dispatcher.Invoke(() => {
                             ContextDisplay.Text = $"Context: Gesture -> {gesture} ({confidence})";
-                            if (gesture == "Swipe Left") { /* Prev Step logic */ }
+                            if (gesture == "Swipe Left") { SendToServer("PREV"); }
                             else if (gesture == "Swipe Right") { SendToServer("NEXT"); }
                             else if (gesture == "Click") { HandlePointerInput(normX, normY); }
                             else if (gesture == "Circle") { OpenCircularMenu(normX, normY); }
@@ -182,8 +184,16 @@ namespace TUIO_WPF_DEMO
                 
                 ContextDisplay.Text = $"Context: Welcome, {userName}! (Optimized for {side} side)";
                 
-                // Example: Request Recipe ID 1 once logged in
-                SendToServer("RECIPE_ID;1");
+                // Request a suggestion based on the time of day
+                SendToServer("GET_SUGGESTION");
+            }
+            else if (message.StartsWith("suggestion"))
+            {
+                string[] parts = message.Split(';');
+                if (parts.Length > 2) {
+                    string suggName = parts[2];
+                    ContextDisplay.Text = $"Context: I suggest making {suggName}. Scan TUIO to begin!";
+                }
             }
             else if (message.StartsWith("login_failed"))
             {
@@ -191,17 +201,35 @@ namespace TUIO_WPF_DEMO
             }
             else if (message.StartsWith("step"))
             {
+                // Hide recipe overview when steps start
+                RecipePanel.Visibility = Visibility.Collapsed;
+                StepPanel.Visibility = Visibility.Visible;
+                _isCooking = true;
+
                 // Format: step;index;total;instruction
                 string[] parts = message.Split(';');
                 if (parts.Length >= 4)
                 {
-                    ContextDisplay.Text = $"Context: Step {parts[1]}/{parts[2]}: {parts[3]}";
+                    int current = int.Parse(parts[1]);
+                    int total = int.Parse(parts[2]);
+
+                    StepNumberText.Text = $"STEP {current} OF {total}";
+                    StepInstructionText.Text = parts[3];
+                    ContextDisplay.Text = "Context: Cooking in progress...";
+
+                    // Update navigation hints
+                    PrevStepHint.Visibility = current > 1 ? Visibility.Visible : Visibility.Hidden;
+                    NextStepHint.Text = (current == total) ? "🏁 Swipe Right to Finish" : "Swipe Right for Next ➡️";
                 }
             }
             else if (message == "session_done")
             {
-                ContextDisplay.Text = "Context: Recipe Completed! Evaluation ready.";
-                // Submit mock evaluation
+                ContextDisplay.Text = "Context: Recipe Completed! Suggesting Dessert: Chocolate Cake.";
+                StepPanel.Visibility = Visibility.Collapsed;
+                _isCooking = false;
+                
+                // Automatically request the cake recipe after any main meal
+                SendToServer("RECIPE_ID;4");
                 SendToServer("EVAL;300;0;20.5;Great recipe");
             }
             else if (message.StartsWith("logout_success"))
@@ -229,12 +257,29 @@ namespace TUIO_WPF_DEMO
             {
                 // Handle recipe header (title;scenario;ingredients...)
                 string[] parts = message.Split(';');
-                ContextDisplay.Text = $"Context: Recipe '{parts[0]}' loaded.";
+                string title = parts[0];
+                string overview = parts[1];
                 
-                // Automatically confirm to start receiving steps
-                SendToServer("CONFIRM");
+                // Populate the new RecipePanel
+                RecipeTitleText.Text = title.ToUpper();
+                RecipeOverviewText.Text = overview;
                 
-                // Start gestures when cooking begins
+                StringBuilder sb = new StringBuilder();
+                for (int i = 2; i < parts.Length; i += 3) {
+                    if (i + 2 < parts.Length)
+                        sb.AppendLine($"• {parts[i]} ({parts[i+1]} {parts[i+2]})");
+                }
+                RecipeIngredientsText.Text = sb.ToString();
+                
+                // ONLY show the panel if it was triggered by a TUIO scan AND not currently cooking
+                if (_showRecipeCard && !_isCooking) {
+                    RecipePanel.Visibility = Visibility.Visible;
+                    ContextDisplay.Text = ""; 
+                } else if (!_isCooking) {
+                    ContextDisplay.Text = $"Context: Ready to cook {title}. Place TUIO to see details.";
+                }
+                
+                _showRecipeCard = false; // Reset flag
                 SendToServer("START_GESTURES");
             }
         }
@@ -448,25 +493,16 @@ namespace TUIO_WPF_DEMO
                 MainCanvas.Children.Add(container);
                 UpdateElementPosition(container, o.X, o.Y, o.Angle);
 
-                if (o.SymbolID == 0)
-                {
-                    if (cookingMenu == null) // Only create if not exists
-                    {
-                        cookingMenu = CreateCircularMenu();
-                        MainCanvas.Children.Add(cookingMenu);
-                        UpdateElementPosition(cookingMenu, o.X, o.Y);
-                        
-                        double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
-                        double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
-                        menuFixedCenter = new Point(o.X * canvasW, o.Y * canvasH);
-                    }
-                    activeMenuSessionId = o.SessionID; // Always track the current session ID
-                }
+                // Set flag to show the full card since this is a physical scan
+                _showRecipeCard = true;
+
+                // Map TUIO SymbolID to Recipe ID (0->1, 1->2, etc.)
+                int recipeId = o.SymbolID + 1;
+                SendToServer($"RECIPE_ID;{recipeId}");
+                
+                System.Diagnostics.Debug.WriteLine($"TUIO {o.SymbolID} scanned. Requesting Recipe {recipeId}");
             });
         }
-
-        // 1. Define how sensitive you want it to be (0.1 to 0.5 is usually good)
-        private float rotationThreshold = 0.2f;
 
         public void updateTuioObject(TuioObject o)
         {
@@ -475,28 +511,12 @@ namespace TUIO_WPF_DEMO
                 {
                     UpdateElementPosition(objectElements[o.SessionID], o.X, o.Y, o.Angle);
 
-                    // 2. Check if the speed is higher than the threshold
-                    if (o.RotationSpeed > rotationThreshold)
-                    {
-                        System.Diagnostics.Debug.WriteLine("Action: Rotating RIGHT");
-                        // Trigger your Right-Rotation function here
-                    }
-                    else if (o.RotationSpeed < -rotationThreshold)
-                    {
-                        System.Diagnostics.Debug.WriteLine("Action: Rotating LEFT");
-                        // Trigger your Left-Rotation function here
-                    }
-                    else
-                    {
-                        // This is the "Center" or Neutral state
-                        System.Diagnostics.Debug.WriteLine("State: IDLE / CENTER");
-                    }
-
-                    if (o.SymbolID == 0 && cookingMenu != null)
-                    {
-                        // Update session ID if it changed (e.g. reappeared)
-                        activeMenuSessionId = o.SessionID;
-                        CheckMenuSelection(o.X, o.Y);
+                    // If user rotates RIGHT, confirm recipe and start steps
+                    // Only send if NOT currently cooking to avoid spams
+                    if (o.RotationSpeed > 1.8f && !_isCooking) {
+                         SendToServer("CONFIRM");
+                         _isCooking = true; // Set locally immediately to prevent spam
+                         System.Diagnostics.Debug.WriteLine("Recipe Confirmed via TUIO Rotation");
                     }
                 }
             });
@@ -554,9 +574,6 @@ namespace TUIO_WPF_DEMO
                     MainCanvas.Children.Remove(objectElements[o.SessionID]);
                     objectElements.Remove(o.SessionID);
                 }
-
-                // Sticky menu: Don't remove ID 0 menu here
-                // It stays until center dwell or app close
             });
         }
         #endregion

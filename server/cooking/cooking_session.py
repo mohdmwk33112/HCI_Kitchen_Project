@@ -73,16 +73,17 @@ def send_recipe(conn, parts, vision, user_id=None):
 
 def _send_steps(conn, steps, session_id, vision):
     """
-    Sends steps one at a time.
-    Client sends NEXT to advance; LOG or EVAL commands are also handled here.
+    Sends steps with support for NEXT and PREV navigation.
     """
     total = len(steps)
+    current_step = 0 # 0-indexed
 
-    for i, instruction in enumerate(steps, start=1):
-        msg = f"step;{i};{total};{instruction}"
+    while current_step < total:
+        instruction = steps[current_step]
+        msg = f"step;{current_step + 1};{total};{instruction}"
         conn.sendall((msg + "\n").encode("utf-8"))
 
-        # Wait for NEXT (or LOG / EVAL) before sending next step
+        # Wait for navigation or other commands
         while True:
             cmd_raw = receive_messages(conn)
             if not cmd_raw:
@@ -91,14 +92,23 @@ def _send_steps(conn, steps, session_id, vision):
             cmd_parts = cmd_raw.split(";", 2)
             cmd = cmd_parts[0].upper()
 
-            if cmd == "NEXT":
-                break  # advance to next step
+            if cmd == "NEXT" or cmd == "SWIPE_RIGHT":
+                current_step += 1
+                break # break inner loop to send next step
+
+            elif cmd == "PREV" or cmd == "SWIPE_LEFT":
+                if current_step > 0:
+                    current_step -= 1
+                    break # break inner loop to send previous step
+                else:
+                    # Already at first step, just re-send it to confirm
+                    break
 
             elif cmd == "LOGOUT":
                 print("[CookingSession] Logout requested during session.")
                 side = vision.set_state("LOGIN")
                 conn.sendall(f"logout_success;{side}\n".encode("utf-8"))
-                return # Stop sending steps and exit session
+                return 
 
             elif cmd == "LOG" and len(cmd_parts) >= 3:
                 itype = cmd_parts[1]
