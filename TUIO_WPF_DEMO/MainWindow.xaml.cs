@@ -22,6 +22,8 @@ namespace TUIO_WPF_DEMO
         private Dictionary<long, FrameworkElement> cursorElements = new Dictionary<long, FrameworkElement>();
         private Dictionary<long, FrameworkElement> objectElements = new Dictionary<long, FrameworkElement>();
         private Dictionary<long, FrameworkElement> blobElements = new Dictionary<long, FrameworkElement>();
+        private List<FrameworkElement> detectionElements = new List<FrameworkElement>();
+
         
         // Cooking Menu State (Persistent)
         private FrameworkElement cookingMenu;
@@ -131,6 +133,15 @@ namespace TUIO_WPF_DEMO
                         return;
                     }
 
+                    // 1b. Handle Ingredient Detections
+                    if (data.ContainsKey("type") && data["type"].ToString() == "detections")
+                    {
+                        var ingredients = (JsonElement)data["ingredients"];
+                        Dispatcher.Invoke(() => UpdateIngredientDetections(ingredients));
+                        return;
+                    }
+
+
                     // 2. Handle Discrete Gestures (Only if menu is closed)
                     if (data.ContainsKey("gesture"))
                     {
@@ -223,6 +234,65 @@ namespace TUIO_WPF_DEMO
             cameraPointer.Visibility = Visibility.Visible;
             UpdateElementPosition(cameraPointer, (float)normX, (float)normY);
         }
+
+        private void UpdateIngredientDetections(JsonElement ingredients)
+        {
+            // Clear old detections
+            foreach (var el in detectionElements)
+            {
+                MainCanvas.Children.Remove(el);
+            }
+            detectionElements.Clear();
+
+            double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
+            double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
+
+            foreach (var item in ingredients.EnumerateArray())
+            {
+                string label = item.GetProperty("label").GetString();
+                double conf = item.GetProperty("confidence").GetDouble();
+                double x = item.GetProperty("x").GetDouble();
+                double y = item.GetProperty("y").GetDouble();
+                double w = item.GetProperty("w").GetDouble();
+                double h = item.GetProperty("h").GetDouble();
+
+                // Create a container for the bounding box and label
+                Grid g = new Grid {
+                    Width = w * canvasW,
+                    Height = h * canvasH,
+                    IsHitTestVisible = false
+                };
+
+                // Bounding Box
+                Border box = new Border {
+                    BorderBrush = Brushes.Yellow,
+                    BorderThickness = new Thickness(3),
+                    Background = new SolidColorBrush(Color.FromArgb(30, 255, 255, 0)),
+                    CornerRadius = new CornerRadius(4)
+                };
+                g.Children.Add(box);
+
+                // Label Text
+                TextBlock txt = new TextBlock {
+                    Text = $"{label} ({conf:P0})",
+                    Foreground = Brushes.Black,
+                    Background = Brushes.Yellow,
+                    FontWeight = FontWeights.Bold,
+                    FontSize = 14,
+                    Padding = new Thickness(4, 2, 4, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Margin = new Thickness(0, -25, 0, 0) // Position above the box
+                };
+                g.Children.Add(txt);
+
+                MainCanvas.Children.Add(g);
+                Canvas.SetLeft(g, x * canvasW);
+                Canvas.SetTop(g, y * canvasH);
+                detectionElements.Add(g);
+            }
+        }
+
 
         private void OpenCircularMenu(double x, double y)
         {

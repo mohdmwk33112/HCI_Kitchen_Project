@@ -5,6 +5,8 @@ from threading import Thread
 from face.face_handler import FaceHandler
 from face.emotion_handler import EmotionHandler
 from gestures.hand_gestures import GestureHandler
+from core.ingredient_detector import IngredientDetector
+
 
 class VisionManager:
     def __init__(self, people_dir, conn):
@@ -12,6 +14,9 @@ class VisionManager:
         self.face_handler = FaceHandler(people_dir)
         self.gesture_handler = GestureHandler()
         self.emotion_handler = EmotionHandler(analysis_interval=30.0)
+        self.ingredient_detector = IngredientDetector("yolo11n.pt")
+
+
         
         self.state = "LOGIN"  # States: LOGIN, GESTURES, CIRCULAR_MENU
         self.running = False
@@ -19,6 +24,11 @@ class VisionManager:
         self.confirmation_counts = {}
         self.last_name = None
         self.current_user = None
+        
+        # Ingredient detection tracking
+        self.detection_frame_count = 0
+        self.detection_interval = 2 # Process every 2nd frame
+
 
     def start(self):
         self.running = True
@@ -163,4 +173,28 @@ class VisionManager:
         except Exception as e:
             print(f"Failed to send emotion: {e}")
 
+        # 4. Detect Ingredients (Every N frames to save CPU and improve stability)
+        self.detection_frame_count += 1
+        if self.detection_frame_count % self.detection_interval == 0:
+            detections = self.ingredient_detector.detect(frame)
+            # Only send if we actually have something (or send empty to clear client)
+            try:
+                detection_payload = json.dumps({"type": "detections", "ingredients": detections})
+                self.conn.sendall((detection_payload + "\n").encode("utf-8"))
+                
+                # Draw bounding boxes on server HUD for debugging
+                for det in detections:
+                    h, w = frame.shape[:2]
+                    x1 = int(det["x"] * w)
+                    y1 = int(det["y"] * h)
+                    bw = int(det["w"] * w)
+                    bh = int(det["h"] * h)
+                    cv2.rectangle(frame, (x1, y1), (x1 + bw, y1 + bh), (0, 255, 0), 2)
+                    cv2.putText(frame, f"{det['label']} {det['confidence']}", (x1, y1 - 10), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            except Exception as e:
+                print(f"Failed to send detections: {e}")
+
         cv2.imshow("Kitchen Assistant - Vision", frame)
+
+
