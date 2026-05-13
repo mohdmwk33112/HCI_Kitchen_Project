@@ -5,10 +5,6 @@
         WindowState="Maximized"
         Background="#000040">
     <Grid>
-        <Canvas x:Name="MainCanvas">
-            <!-- TUIO Elements will be added here dynamically -->
-        </Canvas>
-
         <!-- Context Display -->
         <TextBlock x:Name="ContextDisplay" 
                    Text="Context: Cooking Assistant" 
@@ -20,11 +16,36 @@
                    Margin="20"/>
 
         <!-- Timer Dashboard -->
-        <Border Background="#AA000000" CornerRadius="15" Padding="15" Margin="20" HorizontalAlignment="Right" VerticalAlignment="Top">
+        <Border x:Name="TimerDashboard" Background="#AA000000" CornerRadius="15" Padding="15" Margin="20" HorizontalAlignment="Right" VerticalAlignment="Top">
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="⏲️" FontSize="32" VerticalAlignment="Center" Margin="0,0,10,0"/>
                 <TextBlock x:Name="TimerDisplay" Text="00:00" Foreground="#00FF00" FontSize="36" FontWeight="Bold" FontFamily="Consolas"/>
             </StackPanel>
         </Border>
+
+        <!-- Logout Popup Overlay -->
+        <Grid x:Name="LogoutOverlay" Visibility="Collapsed" Background="#CC000000">
+            <Border Background="#333333" BorderBrush="White" BorderThickness="2" CornerRadius="20" 
+                    Width="400" Height="250" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="LOGOUT?" Foreground="White" FontSize="32" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,30"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <!-- Confirm Button -->
+                        <Border x:Name="BtnConfirmLogout" Background="#AAFF0000" CornerRadius="10" Width="120" Height="60" Margin="10">
+                            <TextBlock Text="CONFIRM" Foreground="White" FontWeight="Bold" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        </Border>
+                        <!-- Cancel Button -->
+                        <Border x:Name="BtnCancelLogout" Background="#AA888888" CornerRadius="10" Width="120" Height="60" Margin="10">
+                            <TextBlock Text="CANCEL" Foreground="White" FontWeight="Bold" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        </Border>
+                    </StackPanel>
+                    <TextBlock Text="(Hold pointer to select)" Foreground="#88FFFFFF" FontSize="12" HorizontalAlignment="Center" Margin="0,10,0,0"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <Canvas x:Name="MainCanvas" IsHitTestVisible="False" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="Transparent">
+            <!-- TUIO Elements will be added here dynamically -->
+        </Canvas>
     </Grid>
 </Window>

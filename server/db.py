@@ -35,7 +35,8 @@ def init_db():
             name                TEXT    NOT NULL,
             face_encoding       TEXT,               -- JSON array of 128 floats
             dietary_restrictions TEXT,
-            skill_level         TEXT
+            skill_level         TEXT,
+            preferred_side      TEXT DEFAULT 'Left'  -- 'Left', 'Center', or 'Right'
         );
 
         CREATE TABLE IF NOT EXISTS RECIPE (
@@ -109,6 +110,14 @@ def update_face_encoding(user_id: int, face_encoding: list):
         conn.execute(
             "UPDATE USER SET face_encoding = ? WHERE user_id = ?",
             (json.dumps(face_encoding), user_id)
+        )
+
+
+def update_preferred_side(user_id: int, side: str):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE USER SET preferred_side = ? WHERE user_id = ?",
+            (side, user_id)
         )
 
 
@@ -192,9 +201,30 @@ def save_evaluation(session_id: int, task_time_sec: int = None,
         )
 
 
+def sync_users_from_files(people_dir):
+    """Ensures all users in face/people exist in the DB."""
+    if not os.path.exists(people_dir):
+        return
+    
+    import glob
+    extensions = ['*.jpg', '*.jpeg', '*.png']
+    image_files = []
+    for ext in extensions:
+        image_files.extend(glob.glob(os.path.join(people_dir, ext)))
+        
+    with get_conn() as conn:
+        for path in image_files:
+            name = os.path.splitext(os.path.basename(path))[0]
+            # Check if exists
+            row = conn.execute("SELECT user_id FROM USER WHERE name = ?", (name,)).fetchone()
+            if not row:
+                print(f"Creating DB user for: {name}")
+                conn.execute("INSERT INTO USER (name) VALUES (?)", (name,))
+
 # ─────────────────────────────────────────────
 #  Entry point — run directly to initialise DB
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
     init_db()
-    print("Tables created. You can now seed the database.")
+    sync_users_from_files(os.path.join("face", "people"))
+    print("Tables created and users synced.")

@@ -25,7 +25,7 @@ from conn import receive_messages
 # ─────────────────────────────────────────────
 #  Recipe delivery
 # ─────────────────────────────────────────────
-def send_recipe(conn, parts, user_id=None):
+def send_recipe(conn, parts, vision, user_id=None):
     """
     Called when client sends RECIPE_ID;<id>.
     parts = ["RECIPE_ID", "<id>"]
@@ -54,18 +54,24 @@ def send_recipe(conn, parts, user_id=None):
     conn.sendall(header.encode("utf-8"))
 
     # ── Wait for client confirmation before sending steps
-    confirm = receive_messages(conn)
-    if not confirm or confirm.strip().upper() != "CONFIRM":
-        return
+    while True:
+        confirm = receive_messages(conn)
+        if not confirm: return
+        cmd = confirm.strip().upper()
+        if cmd == "CONFIRM": break
+        if cmd == "LOGOUT":
+            side = vision.set_state("LOGIN")
+            conn.sendall(f"logout_success;{side}\n".encode("utf-8"))
+            return
 
-    # ── Create a session record
-    session_id = start_session(user_id=user_id or 0, recipe_id=recipe_id,
-                                scenario=recipe.get("scenario"))
+    # ── Create a session record via VisionManager to enable shared tracking
+    session_id = vision.start_new_session(recipe_id=recipe_id, 
+                                          scenario=recipe.get("scenario"))
 
-    _send_steps(conn, recipe["steps_json"], session_id)
+    _send_steps(conn, recipe["steps_json"], session_id, vision)
 
 
-def _send_steps(conn, steps, session_id):
+def _send_steps(conn, steps, session_id, vision):
     """
     Sends steps one at a time.
     Client sends NEXT to advance; LOG or EVAL commands are also handled here.
@@ -87,6 +93,12 @@ def _send_steps(conn, steps, session_id):
 
             if cmd == "NEXT":
                 break  # advance to next step
+
+            elif cmd == "LOGOUT":
+                print("[CookingSession] Logout requested during session.")
+                side = vision.set_state("LOGIN")
+                conn.sendall(f"logout_success;{side}\n".encode("utf-8"))
+                return # Stop sending steps and exit session
 
             elif cmd == "LOG" and len(cmd_parts) >= 3:
                 itype = cmd_parts[1]

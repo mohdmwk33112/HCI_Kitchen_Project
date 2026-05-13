@@ -5,7 +5,7 @@ from deepface import DeepFace
 import numpy as np
 
 class EmotionHandler:
-    def __init__(self, analysis_interval=30.0):
+    def __init__(self, analysis_interval=15.0):
         """
         Initialize the EmotionHandler.
         :param analysis_interval: Minimum time (seconds) between emotion analyses.

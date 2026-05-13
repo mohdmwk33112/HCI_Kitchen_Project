@@ -11,6 +11,11 @@ HOST = "0.0.0.0"
 PORT = 65434
 
 def handle_client():
+    # ── 0. Initialize Database ──────────────────────────────────────────
+    import db
+    db.init_db()
+    db.sync_users_from_files(PEOPLE_DIR)
+
     # ── 1. Accept the client connection ───────────────────────────────────
     conn_obj, server = connect_to_server(HOST, PORT)
     print("Unified connection established.")
@@ -33,8 +38,8 @@ def handle_client():
             # ── Session Control ────────────────────────────────────────
             if cmd == "LOGOUT":
                 print("Client requested logout.")
-                vision.set_state("LOGIN")
-                conn_obj.sendall("logout_success\n".encode("utf-8"))
+                side = vision.set_state("LOGIN")
+                conn_obj.sendall(f"logout_success;{side}\n".encode("utf-8"))
 
             elif cmd == "START_GESTURES":
                 print("Gestures mode confirmed by client.")
@@ -55,7 +60,7 @@ def handle_client():
             # ── Recipe / Cooking Session ───────────────────────────────
             elif cmd == "RECIPE_ID":
                 # Note: send_recipe takes over the receive_messages loop until recipe is done
-                send_recipe(conn_obj, parts)
+                send_recipe(conn_obj, parts, vision)
                 # After recipe is done, we return here to the main loop
 
             # ── Passive/Global Commands (Acknowledge to avoid errors) ──

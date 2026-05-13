@@ -27,11 +27,13 @@ class FaceHandler:
                 # Then explicitly convert to RGB 8-bit to satisfy dlib
                 image = face_recognition.load_image_file(image_path)
                 
-                # Force RGB (remove alpha channel if present)
-                if image.shape[2] == 4:
-                    image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
-                elif len(image.shape) == 2:
+                # Normalize image format
+                if image.ndim == 2: # Grayscale
                     image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+                elif image.shape[2] == 4: # RGBA
+                    image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
+                elif image.shape[2] == 3: # Already RGB, but let's be sure
+                    pass
 
                 # Downscale large images — dlib works best under 800px wide
                 h, w = image.shape[:2]
@@ -40,7 +42,8 @@ class FaceHandler:
                     image = cv2.resize(image, (800, int(h * scale)))
 
                 # FINAL SANITY CHECK: uint8 and C-contiguous is MANDATORY for dlib
-                image = np.ascontiguousarray(image, dtype=np.uint8)
+                # Forcing a copy with astype can help with numpy 2.0 compatibility
+                image = np.ascontiguousarray(image).astype(np.uint8, copy=True)
 
                 encodings = face_recognition.face_encodings(image)
 
@@ -75,9 +78,16 @@ class FaceHandler:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
         small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
-        # Convert BGR (OpenCV) to RGB (face_recognition)
-        rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
-        rgb_small_frame = np.ascontiguousarray(rgb_small_frame, dtype=np.uint8)
+        
+        # Normalize format and convert to RGB
+        if small_frame.ndim == 2:
+            rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_GRAY2RGB)
+        elif small_frame.shape[2] == 4:
+            rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGRA2RGB)
+        else:
+            rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+            
+        rgb_small_frame = np.ascontiguousarray(rgb_small_frame).astype(np.uint8, copy=True)
 
         face_locations = face_recognition.face_locations(rgb_small_frame)
         face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)

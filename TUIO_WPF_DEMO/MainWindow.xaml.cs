@@ -42,8 +42,10 @@ namespace TUIO_WPF_DEMO
 
         // --- Camera & State Management ---
         private bool _isMenuOpen = false;
+        private bool _isLogoutPopupOpen = false;
         private Ellipse cameraPointer; // Visual representation of the camera index finger
         private double lastCamX = 0, lastCamY = 0;
+        private string _userSide = "Left"; // Default
 
         public MainWindow()
         {
@@ -126,10 +128,7 @@ namespace TUIO_WPF_DEMO
 
                         Dispatcher.Invoke(() => {
                             UpdateCameraPointer(x, y);
-                            if (_isMenuOpen)
-                            {
-                                CheckMenuSelection((float)x, (float)y);
-                            }
+                            HandlePointerInput(x, y);
                         });
                         return;
                     }
@@ -163,8 +162,9 @@ namespace TUIO_WPF_DEMO
                             ContextDisplay.Text = $"Context: Gesture -> {gesture} ({confidence})";
                             if (gesture == "Swipe Left") { /* Prev Step logic */ }
                             else if (gesture == "Swipe Right") { SendToServer("NEXT"); }
-                            else if (gesture == "Click") { CheckMenuSelection((float)normX, (float)normY); }
+                            else if (gesture == "Click") { HandlePointerInput(normX, normY); }
                             else if (gesture == "Circle") { OpenCircularMenu(normX, normY); }
+                            else if (gesture == "L Shape") { OpenLogoutPopup(); }
                         });
                     }
                 }
@@ -174,7 +174,13 @@ namespace TUIO_WPF_DEMO
             {
                 string[] parts = message.Split(';');
                 string userName = parts.Length > 1 ? parts[1] : "Unknown";
-                ContextDisplay.Text = $"Context: Welcome, {userName}!";
+                string side = parts.Length > 2 ? parts[2] : "Left";
+                
+                _userSide = side;
+                ShiftContent(side);
+                TimerDashboard.Visibility = Visibility.Visible;
+                
+                ContextDisplay.Text = $"Context: Welcome, {userName}! (Optimized for {side} side)";
                 
                 // Example: Request Recipe ID 1 once logged in
                 SendToServer("RECIPE_ID;1");
@@ -200,7 +206,20 @@ namespace TUIO_WPF_DEMO
             }
             else if (message.StartsWith("logout_success"))
             {
-                ContextDisplay.Text = "Context: Logged out successfully. Waiting for Face Login...";
+                string[] parts = message.Split(';');
+                string side = parts.Length > 1 ? parts[1] : "Center";
+
+                _isLogoutPopupOpen = false;
+                LogoutOverlay.Visibility = Visibility.Collapsed;
+                if (ingredientListPanel != null) ingredientListPanel.Children.Clear();
+                
+                // Return to initial centered state
+                _userSide = "Center";
+                ShiftContent("Center");
+                TimerDashboard.Visibility = Visibility.Collapsed;
+                if (cameraPointer != null) cameraPointer.Visibility = Visibility.Collapsed;
+
+                ContextDisplay.Text = $"Context: Logged out. Decision: {side}. Waiting for Face Login...";
             }
             else if (message.StartsWith("error"))
             {
@@ -246,9 +265,8 @@ namespace TUIO_WPF_DEMO
                     IsHitTestVisible = false
                 };
                 MainCanvas.Children.Add(ingredientListPanel);
-                // Position in Top-Right
-                Canvas.SetRight(ingredientListPanel, 30);
-                Canvas.SetTop(ingredientListPanel, 100);
+                // Initial positioning based on user side
+                UpdateIngredientPanelPosition();
             }
 
             ingredientListPanel.Children.Clear();
@@ -282,6 +300,49 @@ namespace TUIO_WPF_DEMO
                         Margin = new Thickness(0, 0, 0, 4)
                     });
                 }
+            }
+        }
+
+        private void ShiftContent(string side)
+        {
+            if (side == "Right")
+            {
+                ContextDisplay.HorizontalAlignment = HorizontalAlignment.Right;
+                TimerDashboard.HorizontalAlignment = HorizontalAlignment.Right;
+            }
+            else if (side == "Left")
+            {
+                ContextDisplay.HorizontalAlignment = HorizontalAlignment.Left;
+                TimerDashboard.HorizontalAlignment = HorizontalAlignment.Left;
+            }
+            else // Center
+            {
+                ContextDisplay.HorizontalAlignment = HorizontalAlignment.Center;
+                TimerDashboard.HorizontalAlignment = HorizontalAlignment.Center;
+            }
+
+            UpdateIngredientPanelPosition();
+        }
+
+        private void UpdateIngredientPanelPosition()
+        {
+            if (ingredientListPanel == null) return;
+
+            Canvas.SetTop(ingredientListPanel, 100);
+            if (_userSide == "Right")
+            {
+                Canvas.SetLeft(ingredientListPanel, double.NaN);
+                Canvas.SetRight(ingredientListPanel, 30);
+            }
+            else if (_userSide == "Left")
+            {
+                Canvas.SetRight(ingredientListPanel, double.NaN);
+                Canvas.SetLeft(ingredientListPanel, 30);
+            }
+            else // Center
+            {
+                Canvas.SetRight(ingredientListPanel, double.NaN);
+                Canvas.SetLeft(ingredientListPanel, (MainCanvas.ActualWidth / 2) - 100);
             }
         }
 
@@ -361,7 +422,7 @@ namespace TUIO_WPF_DEMO
                 if (cursorElements.ContainsKey(c.SessionID))
                 {
                     UpdateElementPosition(cursorElements[c.SessionID], c.X, c.Y);
-                    CheckMenuSelection(c.X, c.Y);
+                    HandlePointerInput(c.X, c.Y);
                 }
             });
         }
@@ -817,6 +878,117 @@ namespace TUIO_WPF_DEMO
             geom.Figures.Add(figure);
 
             return new Path { Data = geom };
+        }
+        #endregion
+
+        #region Logout Popup
+        private void HandlePointerInput(double x, double y)
+        {
+            if (_isLogoutPopupOpen)
+            {
+                CheckPopupSelection((float)x, (float)y);
+            }
+            else if (_isMenuOpen)
+            {
+                CheckMenuSelection((float)x, (float)y);
+            }
+        }
+
+        private void OpenLogoutPopup()
+        {
+            if (_isLogoutPopupOpen) return;
+            _isLogoutPopupOpen = true;
+            SendToServer("MENU_OPEN"); // Suppress server gestures
+            LogoutOverlay.Visibility = Visibility.Visible;
+            segmentHoverStart = DateTime.Now;
+            lastHoveredSegment = -1;
+            lastHoveredRing = "Popup";
+        }
+
+        private void CloseLogoutPopup(bool isLoggingOut = false)
+        {
+            if (!_isLogoutPopupOpen) return;
+            _isLogoutPopupOpen = false;
+            if (!isLoggingOut) SendToServer("MENU_CLOSED"); // Resume server gestures only if NOT logging out
+            LogoutOverlay.Visibility = Visibility.Collapsed;
+            ResetButtonHighlight(BtnConfirmLogout);
+            ResetButtonHighlight(BtnCancelLogout);
+        }
+
+        private void CheckPopupSelection(float normX, float normY)
+        {
+            double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
+            double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
+            Point p = new Point(normX * canvasW, normY * canvasH);
+
+            if (IsPointInElement(p, BtnConfirmLogout))
+            {
+                HandlePopupDwell("Confirm");
+            }
+            else if (IsPointInElement(p, BtnCancelLogout))
+            {
+                HandlePopupDwell("Cancel");
+            }
+            else
+            {
+                ResetButtonHighlight(BtnConfirmLogout);
+                ResetButtonHighlight(BtnCancelLogout);
+                lastHoveredSegment = -1;
+            }
+        }
+
+        private bool IsPointInElement(Point p, FrameworkElement el)
+        {
+            try {
+                // Since MainCanvas and LogoutOverlay are siblings, we must use TransformToVisual 
+                // to map the button's position into the Canvas coordinate space.
+                var transform = el.TransformToVisual(MainCanvas);
+                Point topLeft = transform.Transform(new Point(0, 0));
+                
+                return p.X >= topLeft.X && p.X <= topLeft.X + el.ActualWidth &&
+                       p.Y >= topLeft.Y && p.Y <= topLeft.Y + el.ActualHeight;
+            } catch { return false; }
+        }
+
+        private void HandlePopupDwell(string button)
+        {
+            int btnIdx = (button == "Confirm" ? 1 : 0);
+            if (lastHoveredRing != "Popup" || lastHoveredSegment != btnIdx)
+            {
+                lastHoveredRing = "Popup";
+                lastHoveredSegment = btnIdx;
+                segmentHoverStart = DateTime.Now;
+                return;
+            }
+
+            if (segmentHoverStart > DateTime.Now) return;
+
+            double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+            double progress = Math.Max(0, Math.Min(1.0, elapsed / 1.5)); // 1.5s for popup safety
+
+            Border target = button == "Confirm" ? BtnConfirmLogout : BtnCancelLogout;
+            target.BorderBrush = Brushes.Gold;
+            target.BorderThickness = new Thickness(2 + (progress * 8));
+
+            if (elapsed >= 1.5)
+            {
+                if (button == "Confirm")
+                {
+                    SendToServer("LOGOUT");
+                    CloseLogoutPopup(true); // Signal that we are logging out
+                    ContextDisplay.Text = "Context: Logging out...";
+                }
+                else
+                {
+                    CloseLogoutPopup(false);
+                }
+                segmentHoverStart = DateTime.Now.AddDays(1);
+            }
+        }
+
+        private void ResetButtonHighlight(Border b)
+        {
+            if (b != null) b.BorderThickness = new Thickness(0);
         }
         #endregion
 
