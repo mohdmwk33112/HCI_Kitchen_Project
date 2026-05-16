@@ -31,9 +31,17 @@ class VisionManager:
         self.current_user_id = None
         self.current_session_id = None
         
-        # Ingredient detection tracking
+        # Performance tuning
         self.detection_frame_count = 0
-        self.detection_interval = 2 # Process every 2nd frame
+        self.detection_interval = 15 # Process ingredients every 15th frame
+        self.emotion_frame_count = 0
+        self.emotion_interval = 5   # Process emotions every 5th frame
+        self.gaze_frame_count = 0
+        self.gaze_interval = 1      # Gaze stays high priority
+
+        # Registration state
+        self.capture_pending = False
+        self.capture_name = None
 
 
     def start(self):
@@ -104,21 +112,27 @@ class VisionManager:
                     time.sleep(0.01)
                     continue
 
-                if frame.ndim == 2:  # Grayscale
-                    frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-                elif frame.shape[2] == 4:  # BGRA
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-
-                frame = cv2.flip(frame, 1)  # Mirror
+                # Downsample frame for processing speed
+                small_frame = cv2.resize(frame, (640, 480))
+                small_frame = cv2.flip(small_frame, 1)  # Mirror
                 timestamp_ms = int(time.time() * 1000)
 
+                # HANDLE CAPTURE REQUEST
+                if self.capture_pending and self.capture_name:
+                    success = self.face_handler.register_new_face(frame, self.capture_name)
+                    if success:
+                        self.conn.sendall(f"capture_success;{self.capture_name}\n".encode("utf-8"))
+                    else:
+                        self.conn.sendall("error;capture_failed\n".encode("utf-8"))
+                    self.capture_pending = False
+                    self.capture_name = None
+
                 if self.state == "LOGIN":
-                    self._process_login(frame)
+                    self._process_login(small_frame)
                 elif self.state == "GESTURES":
-                    self._process_gestures(frame, timestamp_ms)
+                    self._process_gestures(small_frame, timestamp_ms)
                 elif self.state == "CIRCULAR_MENU":
-                    # While menu is open, we skip gesture events but still send pointer tracking
-                    self._process_gestures(frame, timestamp_ms, suppress_gestures=True)
+                    self._process_gestures(small_frame, timestamp_ms, suppress_gestures=True)
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     self.running = False
@@ -187,8 +201,14 @@ class VisionManager:
             gh, gw = frame.shape[:2]
             cv2.circle(frame, (int(gaze_h * gw), int(gaze_v * gh)), 5, (255, 0, 255), -1)
 
-        # Detect Emotion (Only in GESTURES state, after login)
-        emotion = self.emotion_handler.analyze_emotion(frame)
+        # Detect Emotion (Optimized interval)
+        self.emotion_frame_count += 1
+        emotion = "neutral"
+        if self.emotion_frame_count % self.emotion_interval == 0:
+            emotion = self.emotion_handler.analyze_emotion(frame)
+        else:
+            emotion = getattr(self, 'last_emotion', "neutral")
+        self.last_emotion = emotion
         
         # Draw HUD
         cv2.putText(frame, f"User: {self.current_user}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)

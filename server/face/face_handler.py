@@ -113,3 +113,21 @@ class FaceHandler:
             results.append((name, confidence_pct))
 
         return results
+
+    def register_new_face(self, frame, name):
+        """
+        Saves a frame as a new face image and reloads the face database.
+        """
+        if frame is None or not name:
+            return False
+            
+        filename = f"{name}.jpg"
+        filepath = os.path.join(self.people_dir, filename)
+        
+        # Save the full resolution frame (BGR format for CV2)
+        cv2.imwrite(filepath, frame)
+        print(f"Registered new face: {name} at {filepath}")
+        
+        # Reload the database to include the new face immediately
+        self.load_known_faces()
+        return True

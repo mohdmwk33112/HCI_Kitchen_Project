@@ -59,6 +59,9 @@ def send_recipe(conn, parts, vision, user_id=None):
         if not confirm: return
         cmd = confirm.strip().upper()
         if cmd == "CONFIRM": break
+        if cmd == "CANCEL": 
+            print("[CookingSession] Recipe cancelled by user.")
+            return
         if cmd == "LOGOUT":
             side = vision.set_state("LOGIN")
             conn.sendall(f"logout_success;{side}\n".encode("utf-8"))
@@ -103,6 +106,10 @@ def _send_steps(conn, steps, session_id, vision):
                 else:
                     # Already at first step, just re-send it to confirm
                     break
+            
+            elif cmd == "CANCEL":
+                print("[CookingSession] Session cancelled during steps.")
+                return
 
             elif cmd == "LOGOUT":
                 print("[CookingSession] Logout requested during session.")
@@ -117,6 +124,15 @@ def _send_steps(conn, steps, session_id, vision):
                 except Exception:
                     data = {"raw": cmd_parts[2]}
                 log_interaction(session_id, itype, data)
+
+            elif cmd == "EMOTION" and len(cmd_parts) >= 2:
+                emotion = cmd_parts[1].lower()
+                # If negative emotion detected, simplify/encourage the current step
+                if emotion in ["angry", "sad", "disgust", "fear"]:
+                    print(f"[CookingSession] Adaptive Support: detected {emotion}. Simplifying step.")
+                    support_msg = f" (Focus on this part only: {instruction.split('.')[0]}. You've got this!)"
+                    adaptive_msg = f"step;{current_step + 1};{total};{instruction}{support_msg}"
+                    conn.sendall((adaptive_msg + "\n").encode("utf-8"))
 
             elif cmd == "EVAL" and len(cmd_parts) >= 2:
                 _handle_eval(conn, session_id, cmd_raw)

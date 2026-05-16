@@ -46,6 +46,36 @@ def handle_client():
                 vision.set_state("GESTURES")
                 conn_obj.sendall("gestures_started\n".encode("utf-8"))
 
+            elif cmd == "CAPTURE_FACE":
+                if len(parts) > 1:
+                    name = parts[1]
+                    print(f"[Server] Capture requested for: {name}")
+                    vision.capture_name = name
+                    vision.capture_pending = True
+                else:
+                    conn_obj.sendall("error;missing_name\n".encode("utf-8"))
+
+            elif cmd == "LIST_USERS":
+                import glob
+                files = glob.glob(os.path.join(PEOPLE_DIR, "*.jpg"))
+                names = [os.path.splitext(os.path.basename(f))[0] for f in files]
+                resp = "users_list;" + ";".join(names) + "\n"
+                conn_obj.sendall(resp.encode("utf-8"))
+
+            elif cmd == "DELETE_USER":
+                if len(parts) > 1:
+                    name = parts[1]
+                    path = os.path.join(PEOPLE_DIR, f"{name}.jpg")
+                    if os.path.exists(path):
+                        os.remove(path)
+                        print(f"[Server] Deleted user: {name}")
+                        vision.face_handler.load_known_faces() # Reload encoding DB
+                        conn_obj.sendall("delete_success\n".encode("utf-8"))
+                    else:
+                        conn_obj.sendall("error;user_not_found\n".encode("utf-8"))
+                else:
+                    conn_obj.sendall("error;missing_name\n".encode("utf-8"))
+
             # ── Circular Menu State Control ────────────────────────────
             elif cmd == "MENU_OPEN":
                 print("[Server] Circular menu opened — suppressing camera gestures.")

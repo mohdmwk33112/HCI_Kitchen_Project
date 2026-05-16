@@ -14,6 +14,7 @@ namespace TUIO_WPF_DEMO
 {
     public partial class MainWindow : Window, TuioListener
     {
+        private List<Border> adminDeleteButtons = new List<Border>();
         private TuioClient client;
         private TcpClient pythonClient;
         private NetworkStream stream;
@@ -41,6 +42,7 @@ namespace TUIO_WPF_DEMO
         private int remainingSeconds = 0;
 
         // --- Camera & State Management ---
+        private bool _isHomeOpen = false;
         private bool _isMenuOpen = false;
         private bool _isLogoutPopupOpen = false;
         private bool _showRecipeCard = false;
@@ -48,6 +50,9 @@ namespace TUIO_WPF_DEMO
         private Ellipse cameraPointer; // Visual representation of the camera index finger
         private double lastCamX = 0, lastCamY = 0;
         private string _userSide = "Left"; // Default
+        private bool _hadPositiveEmotion = false;
+        private string _lastSentEmotion = "neutral";
+        private DateTime _lastEmotionTime = DateTime.MinValue;
 
         public MainWindow()
         {
@@ -128,10 +133,25 @@ namespace TUIO_WPF_DEMO
                         double y = double.Parse(data["y"].ToString());
                         lastCamX = x; lastCamY = y;
 
-                        Dispatcher.Invoke(() => {
-                            UpdateCameraPointer(x, y);
-                            HandlePointerInput(x, y);
-                        });
+                        UpdateCameraPointer(x, y);
+                        HandlePointerInput(x, y);
+                        return;
+                    }
+
+                    // 1b. Handle Emotion
+                    if (data.ContainsKey("type") && data["type"].ToString() == "emotion")
+                    {
+                        string emotion = data["value"].ToString();
+                        
+                        // TRACK EMOTION FOR ADAPTIVE UI
+                        if (emotion == "happy") _hadPositiveEmotion = true;
+                        
+                        // Send emotion to server if cooking and changed (throttle 1s)
+                        if (_isCooking && emotion != _lastSentEmotion && (DateTime.Now - _lastEmotionTime).TotalSeconds > 1.0) {
+                            SendToServer($"EMOTION;{emotion}");
+                            _lastSentEmotion = emotion;
+                            _lastEmotionTime = DateTime.Now;
+                        }
                         return;
                     }
 
@@ -181,11 +201,21 @@ namespace TUIO_WPF_DEMO
                 _userSide = side;
                 ShiftContent(side);
                 TimerDashboard.Visibility = Visibility.Visible;
+                HomePanel.Visibility = Visibility.Visible;
+                _isHomeOpen = true;
                 
-                ContextDisplay.Text = $"Context: Welcome, {userName}! (Optimized for {side} side)";
+                ContextDisplay.Text = $"Welcome, {userName}";
                 
-                // Request a suggestion based on the time of day
-                SendToServer("GET_SUGGESTION");
+                // ADMIN ROLE SEPARATION:
+                if (userName.ToLower() == "wael") {
+                    AdminChoicePanel.Visibility = Visibility.Visible;
+                    HomePanel.Visibility = Visibility.Collapsed;
+                    ContextDisplay.Text = "Administrator Access";
+                } else {
+                    HomePanel.Visibility = Visibility.Visible;
+                    AdminChoicePanel.Visibility = Visibility.Collapsed;
+                    SendToServer("GET_SUGGESTION");
+                }
             }
             else if (message.StartsWith("suggestion"))
             {
@@ -201,10 +231,12 @@ namespace TUIO_WPF_DEMO
             }
             else if (message.StartsWith("step"))
             {
-                // Hide recipe overview when steps start
+                // Hide panels when steps start
                 RecipePanel.Visibility = Visibility.Collapsed;
+                HomePanel.Visibility = Visibility.Collapsed;
                 StepPanel.Visibility = Visibility.Visible;
                 _isCooking = true;
+                _isHomeOpen = false;
 
                 // Format: step;index;total;instruction
                 string[] parts = message.Split(';');
@@ -224,13 +256,16 @@ namespace TUIO_WPF_DEMO
             }
             else if (message == "session_done")
             {
-                ContextDisplay.Text = "Context: Recipe Completed! Suggesting Dessert: Chocolate Cake.";
                 StepPanel.Visibility = Visibility.Collapsed;
                 _isCooking = false;
-                
-                // Automatically request the cake recipe after any main meal
-                SendToServer("RECIPE_ID;4");
-                SendToServer("EVAL;300;0;20.5;Great recipe");
+
+                if (_hadPositiveEmotion) {
+                    RatingPanel.Visibility = Visibility.Visible;
+                    ContextDisplay.Text = "Great job!";
+                } else {
+                    DessertInquiryPanel.Visibility = Visibility.Visible;
+                    ContextDisplay.Text = "Finished!";
+                }
             }
             else if (message.StartsWith("logout_success"))
             {
@@ -239,6 +274,12 @@ namespace TUIO_WPF_DEMO
 
                 _isLogoutPopupOpen = false;
                 LogoutOverlay.Visibility = Visibility.Collapsed;
+                HomePanel.Visibility = Visibility.Collapsed;
+                RecipePanel.Visibility = Visibility.Collapsed;
+                StepPanel.Visibility = Visibility.Collapsed;
+                _isHomeOpen = false;
+                _isCooking = false;
+                
                 if (ingredientListPanel != null) ingredientListPanel.Children.Clear();
                 
                 // Return to initial centered state
@@ -247,11 +288,34 @@ namespace TUIO_WPF_DEMO
                 TimerDashboard.Visibility = Visibility.Collapsed;
                 if (cameraPointer != null) cameraPointer.Visibility = Visibility.Collapsed;
 
-                ContextDisplay.Text = $"Context: Logged out. Decision: {side}. Waiting for Face Login...";
+                ContextDisplay.Text = "Please Log In";
             }
             else if (message.StartsWith("error"))
             {
                 ContextDisplay.Text = "Context: Server Error - " + message;
+            }
+            else if (message.StartsWith("capture_success"))
+            {
+                string[] parts = message.Split(';');
+                string name = parts.Length > 1 ? parts[1] : "User";
+                ContextDisplay.Text = $"Success! {name} registered.";
+                SendToServer("LIST_USERS"); // Refresh list
+            }
+            else if (message.StartsWith("users_list"))
+            {
+                string[] parts = message.Split(';');
+                AdminUserListPanel.Children.Clear();
+                adminDeleteButtons.Clear();
+                for (int i = 1; i < parts.Length; i++) {
+                    if (!string.IsNullOrEmpty(parts[i])) {
+                        AddUserToAdminList(parts[i]);
+                    }
+                }
+            }
+            else if (message.StartsWith("delete_success"))
+            {
+                ContextDisplay.Text = "User deleted successfully.";
+                SendToServer("LIST_USERS"); // Refresh list
             }
             else if (message.Contains(";") && !message.StartsWith("gestures_"))
             {
@@ -272,14 +336,17 @@ namespace TUIO_WPF_DEMO
                 RecipeIngredientsText.Text = sb.ToString();
                 
                 // ONLY show the panel if it was triggered by a TUIO scan AND not currently cooking
-                if (_showRecipeCard && !_isCooking) {
+                if (_showRecipeCard && !_isCooking && AdminChoicePanel.Visibility != Visibility.Visible) {
+                    HomePanel.Visibility = Visibility.Collapsed;
+                    AdminChoicePanel.Visibility = Visibility.Collapsed;
+                    _isHomeOpen = false;
                     RecipePanel.Visibility = Visibility.Visible;
-                    ContextDisplay.Text = ""; 
+                    ContextDisplay.Text = "Recipe Details"; 
+                    _showRecipeCard = false; // Reset flag only after successful display
                 } else if (!_isCooking) {
-                    ContextDisplay.Text = $"Context: Ready to cook {title}. Place TUIO to see details.";
+                    ContextDisplay.Text = $"Ready to cook {title}.";
                 }
                 
-                _showRecipeCard = false; // Reset flag
                 SendToServer("START_GESTURES");
             }
         }
@@ -449,15 +516,15 @@ namespace TUIO_WPF_DEMO
         public void addTuioCursor(TuioCursor c)
         {
             Dispatcher.Invoke(() => {
-                // If menu is open, TUIO cursors become selection pointers (Gold rings)
-                Brush fill = _isMenuOpen ? Brushes.White : Brushes.Magenta;
-                Brush stroke = _isMenuOpen ? Brushes.Gold : Brushes.Blue;
+                // If menu is open, TUIO cursors become selection pointers
+                Brush fill = _isMenuOpen ? Brushes.White : new SolidColorBrush(Color.FromRgb(52, 152, 219));
+                Brush stroke = _isMenuOpen ? new SolidColorBrush(Color.FromRgb(241, 196, 15)) : Brushes.White;
                 
                 Grid container = CreateContainer(25, 25, fill, stroke, true, "");
                 cursorElements[c.SessionID] = container;
                 MainCanvas.Children.Add(container);
                 UpdateElementPosition(container, c.X, c.Y);
-                CheckMenuSelection(c.X, c.Y);
+                HandlePointerInput(c.X, c.Y);
             });
         }
 
@@ -488,10 +555,22 @@ namespace TUIO_WPF_DEMO
         public void addTuioObject(TuioObject o)
         {
             Dispatcher.Invoke(() => {
-                Grid container = CreateContainer(50, 50, new SolidColorBrush(Color.FromRgb(64, 0, 0)), Brushes.White, false, o.SymbolID.ToString());
+                Grid container = CreateContainer(50, 50, new SolidColorBrush(Color.FromRgb(44, 62, 80)), Brushes.White, false, o.SymbolID.ToString());
                 objectElements[o.SessionID] = container;
                 MainCanvas.Children.Add(container);
                 UpdateElementPosition(container, o.X, o.Y, o.Angle);
+
+                // ID 10 opens the circular menu (unused id)
+                if (o.SymbolID == 10) {
+                    OpenCircularMenu(o.X, o.Y);
+                    return;
+                }
+
+                // PREVENTION: Don't let TUIO objects interrupt an open recipe view or cooking session
+                if (RecipePanel.Visibility == Visibility.Visible || _isCooking) {
+                    System.Diagnostics.Debug.WriteLine($"Ignored TUIO {o.SymbolID} because a recipe is already open.");
+                    return;
+                }
 
                 // Set flag to show the full card since this is a physical scan
                 _showRecipeCard = true;
@@ -511,12 +590,26 @@ namespace TUIO_WPF_DEMO
                 {
                     UpdateElementPosition(objectElements[o.SessionID], o.X, o.Y, o.Angle);
 
+                    // NAVIGATION: If already cooking, use rotation for steps
+                    if (_isCooking && StepPanel.Visibility == Visibility.Visible) {
+                        if (o.RotationSpeed > 2.5f) { // Fast flick Right
+                             SendToServer("NEXT");
+                             System.Diagnostics.Debug.WriteLine("Next Step via TUIO Rotation");
+                        } else if (o.RotationSpeed < -2.5f) { // Fast flick Left
+                             SendToServer("PREV");
+                             System.Diagnostics.Debug.WriteLine("Prev Step via TUIO Rotation");
+                        }
+                    }
                     // If user rotates RIGHT, confirm recipe and start steps
-                    // Only send if NOT currently cooking to avoid spams
-                    if (o.RotationSpeed > 1.8f && !_isCooking) {
+                    else if (o.RotationSpeed > 1.8f && !_isCooking && RecipePanel.Visibility == Visibility.Visible) {
                          SendToServer("CONFIRM");
-                         _isCooking = true; // Set locally immediately to prevent spam
+                         _isCooking = true;
                          System.Diagnostics.Debug.WriteLine("Recipe Confirmed via TUIO Rotation");
+                    }
+                    // If user rotates LEFT, cancel recipe selection
+                    else if (o.RotationSpeed < -1.8f && !_isCooking && RecipePanel.Visibility == Visibility.Visible) {
+                        CancelRecipe();
+                        System.Diagnostics.Debug.WriteLine("Recipe Cancelled via TUIO Rotation");
                     }
                 }
             });
@@ -569,6 +662,8 @@ namespace TUIO_WPF_DEMO
         public void removeTuioObject(TuioObject o)
         {
             Dispatcher.Invoke(() => {
+                if (o.SymbolID == 10) CloseCircularMenu();
+
                 if (objectElements.ContainsKey(o.SessionID))
                 {
                     MainCanvas.Children.Remove(objectElements[o.SessionID]);
@@ -639,9 +734,9 @@ namespace TUIO_WPF_DEMO
                 Path seg = CreatePieSegment(center, center, innerR, middleR, i * angleStep, (i + 1) * angleStep);
                 seg.Tag = mainItems[i].Label;
                 Color baseColor = mainItems[i].Color;
-                seg.Fill = new LinearGradientBrush(Color.FromArgb(160, baseColor.R, baseColor.G, baseColor.B), Color.FromArgb(20, baseColor.R, baseColor.G, baseColor.B), 45);
+                seg.Fill = new SolidColorBrush(Color.FromArgb(200, baseColor.R, baseColor.G, baseColor.B));
                 seg.Stroke = Brushes.White;
-                seg.StrokeThickness = 1;
+                seg.StrokeThickness = 2;
                 
                 innerSegmentList.Add(seg);
                 menuRoot.Children.Add(seg);
@@ -704,9 +799,9 @@ namespace TUIO_WPF_DEMO
             {
                 Path seg = CreatePieSegment(center, center, innerR, outerR, i * step, (i + 1) * step);
                 seg.Tag = labels[i];
-                seg.Fill = new SolidColorBrush(Color.FromArgb(140, ringColor.R, ringColor.G, ringColor.B));
+                seg.Fill = new SolidColorBrush(Color.FromArgb(220, ringColor.R, ringColor.G, ringColor.B));
                 seg.Stroke = Brushes.White;
-                seg.StrokeThickness = 0.5;
+                seg.StrokeThickness = 2;
                 
                 menu.Children.Add(seg);
                 outerSegmentList.Add(seg);
@@ -909,6 +1004,333 @@ namespace TUIO_WPF_DEMO
             {
                 CheckMenuSelection((float)x, (float)y);
             }
+            else if (RecipePanel.Visibility == Visibility.Visible)
+            {
+                CheckRecipeDetailSelection((float)x, (float)y);
+            }
+            else if (AdminChoicePanel.Visibility == Visibility.Visible)
+            {
+                CheckAdminChoiceSelection((float)x, (float)y);
+            }
+            else if (AdminPanel.Visibility == Visibility.Visible)
+            {
+                CheckAdminSelection((float)x, (float)y);
+            }
+            else if (StepPanel.Visibility == Visibility.Visible)
+            {
+                CheckStepPanelSelection((float)x, (float)y);
+            }
+            else if (RatingPanel.Visibility == Visibility.Visible)
+            {
+                CheckRatingSelection((float)x, (float)y);
+            }
+            else if (DessertInquiryPanel.Visibility == Visibility.Visible)
+            {
+                CheckDessertInquirySelection((float)x, (float)y);
+            }
+            else if (HomePanel.Visibility == Visibility.Visible)
+            {
+                CheckHomeSelection((float)x, (float)y);
+            }
+        }
+
+        private void CheckRecipeDetailSelection(float normX, float normY)
+        {
+            double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
+            double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
+            Point p = new Point(normX * canvasW, normY * canvasH);
+
+            if (IsPointInElement(p, BtnStartCooking))
+            {
+                if (lastHoveredRing != "Detail" || lastHoveredSegment != 1)
+                {
+                    lastHoveredRing = "Detail";
+                    lastHoveredSegment = 1;
+                    segmentHoverStart = DateTime.Now;
+                    return;
+                }
+
+                double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                double prg = Math.Max(0, Math.Min(1.0, elapsed / 1.5));
+                StartCookingBar.Width = prg * StartCookingProgress.ActualWidth;
+
+                if (elapsed >= 1.5)
+                {
+                    SendToServer("CONFIRM");
+                    _isCooking = true;
+                    segmentHoverStart = DateTime.Now.AddDays(1);
+                }
+            }
+            else if (IsPointInElement(p, BtnCancelRecipe))
+            {
+                if (lastHoveredRing != "Detail" || lastHoveredSegment != 0)
+                {
+                    lastHoveredRing = "Detail";
+                    lastHoveredSegment = 0;
+                    segmentHoverStart = DateTime.Now;
+                    return;
+                }
+
+                double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                double prg = Math.Max(0, Math.Min(1.0, elapsed / 1.5));
+                CancelRecipeBar.Width = prg * CancelRecipeProgress.ActualWidth;
+
+                if (elapsed >= 1.5)
+                {
+                    CancelRecipe();
+                }
+            }
+            else
+            {
+                StartCookingBar.Width = 0;
+                CancelRecipeBar.Width = 0;
+                lastHoveredSegment = -1;
+            }
+        }
+
+        private void CancelRecipe()
+        {
+            // Collapse all cooking-related panels
+            RecipePanel.Visibility = Visibility.Collapsed;
+            StepPanel.Visibility = Visibility.Collapsed;
+            RatingPanel.Visibility = Visibility.Collapsed;
+            DessertInquiryPanel.Visibility = Visibility.Collapsed;
+            TimerDashboard.Visibility = Visibility.Collapsed;
+
+            HomePanel.Visibility = Visibility.Visible;
+            _isHomeOpen = true;
+            _isCooking = false;
+            _showRecipeCard = false;
+            _hadPositiveEmotion = false; // Reset session emotion
+            
+            ContextDisplay.Text = "Recipe Interrupted. Choose another.";
+            SendToServer("CANCEL");
+            
+            // Reset all dwelling states completely
+            lastHoveredRing = "None";
+            lastHoveredSegment = -1;
+            segmentHoverStart = DateTime.MinValue; 
+            
+            // Clean bars
+            if (StartCookingBar != null) StartCookingBar.Width = 0;
+            if (CancelRecipeBar != null) CancelRecipeBar.Width = 0;
+            if (StopCookingBar != null) StopCookingBar.Width = 0;
+            
+            Border[] bars = { Bar1, Bar2, Bar3, Bar4 };
+            foreach (var b in bars) if (b != null) b.Width = 0;
+        }
+
+        private void CheckHomeSelection(float normX, float normY)
+        {
+            double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
+            double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
+            Point p = new Point(normX * canvasW, normY * canvasH);
+
+            Border[] cards = { RecipeCard1, RecipeCard2, RecipeCard3, RecipeCard4 };
+            Border[] bars = { Bar1, Bar2, Bar3, Bar4 };
+            Border[] progress = { Progress1, Progress2, Progress3, Progress4 };
+
+            bool found = false;
+            for (int i = 0; i < cards.Length; i++)
+            {
+                if (IsPointInElement(p, cards[i]))
+                {
+                    found = true;
+                    if (lastHoveredRing != "Home" || lastHoveredSegment != i)
+                    {
+                        lastHoveredRing = "Home";
+                        lastHoveredSegment = i;
+                        segmentHoverStart = DateTime.Now;
+                        return;
+                    }
+
+                    double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                    double prg = Math.Max(0, Math.Min(1.0, elapsed / 1.5));
+                    bars[i].Width = prg * progress[i].ActualWidth;
+
+                    if (elapsed >= 1.5)
+                    {
+                        _showRecipeCard = true;
+                        int recipeId = int.Parse(cards[i].Tag.ToString());
+                        SendToServer($"RECIPE_ID;{recipeId}");
+                        ContextDisplay.Text = "Loading Recipe Details...";
+                        
+                        // Set state to Cooldown to prevent repeat sends
+                        lastHoveredRing = "Cooldown";
+                        segmentHoverStart = DateTime.MaxValue; 
+                    }
+                    return; // EXIT loop since we found the card
+                }
+                else
+                {
+                    bars[i].Width = 0;
+                }
+            }
+
+            if (!found)
+            {
+                lastHoveredRing = "None";
+                lastHoveredSegment = -1;
+            }
+        }
+
+        private void CheckAdminChoiceSelection(float normX, float normY)
+        {
+            double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
+            double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
+            Point p = new Point(normX * canvasW, normY * canvasH);
+
+            // 1. Enter Kitchen
+            if (IsPointInElement(p, BtnEnterKitchen))
+            {
+                if (lastHoveredRing != "Choice" || lastHoveredSegment != 1) {
+                    lastHoveredRing = "Choice";
+                    lastHoveredSegment = 1;
+                    segmentHoverStart = DateTime.Now;
+                    return;
+                }
+                double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                EnterKitchenBar.Width = Math.Min(1.0, elapsed / 1.5) * EnterKitchenProgress.ActualWidth;
+                if (elapsed >= 1.5) {
+                    AdminChoicePanel.Visibility = Visibility.Collapsed;
+                    HomePanel.Visibility = Visibility.Visible;
+                    ContextDisplay.Text = "Kitchen Hub";
+                    SendToServer("GET_SUGGESTION");
+                    lastHoveredRing = "Cooldown";
+                    segmentHoverStart = DateTime.MaxValue;
+                }
+                return;
+            } else { EnterKitchenBar.Width = 0; }
+
+            // 2. Enter Admin
+            if (IsPointInElement(p, BtnEnterAdmin))
+            {
+                if (lastHoveredRing != "Choice" || lastHoveredSegment != 2) {
+                    lastHoveredRing = "Choice";
+                    lastHoveredSegment = 2;
+                    segmentHoverStart = DateTime.Now;
+                    return;
+                }
+                double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                EnterAdminBar.Width = Math.Min(1.0, elapsed / 1.5) * EnterAdminProgress.ActualWidth;
+                if (elapsed >= 1.5) {
+                    AdminChoicePanel.Visibility = Visibility.Collapsed;
+                    AdminPanel.Visibility = Visibility.Visible;
+                    ContextDisplay.Text = "Admin Workspace";
+                    SendToServer("LIST_USERS");
+                    lastHoveredRing = "Cooldown";
+                    segmentHoverStart = DateTime.MaxValue;
+                }
+                return;
+            } else { EnterAdminBar.Width = 0; }
+
+            if (lastHoveredRing == "Choice") lastHoveredRing = "None";
+        }
+
+        private void AddUserToAdminList(string name)
+        {
+            Border row = new Border { Background = Brushes.White, CornerRadius = new CornerRadius(8), Margin = new Thickness(0, 2, 0, 2), Padding = new Thickness(10) };
+            Grid grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            TextBlock txtName = new TextBlock { Text = name, FontSize = 18, VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.FromRgb(44, 62, 80)) };
+            Grid.SetColumn(txtName, 0);
+
+            Border btnDel = new Border { Background = new SolidColorBrush(Color.FromRgb(231, 76, 60)), CornerRadius = new CornerRadius(5), Padding = new Thickness(10, 5, 10, 5), Tag = name };
+            btnDel.Child = new TextBlock { Text = "DELETE", Foreground = Brushes.White, FontWeight = FontWeights.Bold, FontSize = 12 };
+            Grid.SetColumn(btnDel, 1);
+
+            grid.Children.Add(txtName);
+            grid.Children.Add(btnDel);
+            row.Child = grid;
+
+            AdminUserListPanel.Children.Add(row);
+            adminDeleteButtons.Add(btnDel);
+        }
+
+        private void CheckAdminSelection(float normX, float normY)
+        {
+            double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
+            double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
+            Point p = new Point(normX * canvasW, normY * canvasH);
+
+            // 1. Check Capture Button
+            if (IsPointInElement(p, BtnCapture))
+            {
+                if (lastHoveredRing != "Admin" || lastHoveredSegment != 0)
+                {
+                    lastHoveredRing = "Admin";
+                    lastHoveredSegment = 0;
+                    segmentHoverStart = DateTime.Now;
+                    return;
+                }
+
+                double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                double prg = Math.Max(0, Math.Min(1.0, elapsed / 1.5));
+                CaptureProgressBar.Width = prg * CaptureProgress.ActualWidth;
+
+                if (elapsed >= 1.5)
+                {
+                    string name = TxtNewUserName.Text.Trim();
+                    if (string.IsNullOrEmpty(name)) name = "NewUser";
+                    
+                    SendToServer($"CAPTURE_FACE;{name}");
+                    ContextDisplay.Text = $"Capturing face for {name}...";
+                    
+                    lastHoveredRing = "Cooldown";
+                    segmentHoverStart = DateTime.MaxValue;
+                    CaptureProgressBar.Width = 0;
+                }
+                return;
+            }
+            else
+            {
+                CaptureProgressBar.Width = 0;
+            }
+
+            // 2. Check Delete Buttons
+            for (int i = 0; i < adminDeleteButtons.Count; i++)
+            {
+                if (IsPointInElement(p, adminDeleteButtons[i]))
+                {
+                    if (lastHoveredRing != "AdminList" || lastHoveredSegment != i)
+                    {
+                        lastHoveredRing = "AdminList";
+                        lastHoveredSegment = i;
+                        segmentHoverStart = DateTime.Now;
+                        return;
+                    }
+
+                    double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                    // Visual feedback for delete (maybe redder?)
+                    adminDeleteButtons[i].Background = new SolidColorBrush(Color.FromRgb(192, 57, 43));
+
+                    if (elapsed >= 1.5)
+                    {
+                        string name = adminDeleteButtons[i].Tag.ToString();
+                        SendToServer($"DELETE_USER;{name}");
+                        ContextDisplay.Text = $"Deleting user {name}...";
+                        lastHoveredRing = "Cooldown";
+                        segmentHoverStart = DateTime.MaxValue;
+                    }
+                    return;
+                }
+                else
+                {
+                    // Reset color
+                    adminDeleteButtons[i].Background = new SolidColorBrush(Color.FromRgb(231, 76, 60));
+                }
+            }
+
+            if (lastHoveredRing == "Admin" || lastHoveredRing == "AdminList") lastHoveredRing = "None";
+        }
+
+        private void BtnExitAdmin_Click(object sender, RoutedEventArgs e)
+        {
+            AdminPanel.Visibility = Visibility.Collapsed;
+            AdminChoicePanel.Visibility = Visibility.Visible;
+            ContextDisplay.Text = "Administrator Access";
         }
 
         private void OpenLogoutPopup()
@@ -954,6 +1376,40 @@ namespace TUIO_WPF_DEMO
             }
         }
 
+        private void CheckStepPanelSelection(float normX, float normY)
+        {
+            double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
+            double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
+            Point p = new Point(normX * canvasW, normY * canvasH);
+
+            if (IsPointInElement(p, BtnStopCooking))
+            {
+                if (lastHoveredRing != "Steps" || lastHoveredSegment != 0)
+                {
+                    lastHoveredRing = "Steps";
+                    lastHoveredSegment = 0;
+                    segmentHoverStart = DateTime.Now;
+                    return;
+                }
+
+                double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                StopCookingBar.Width = Math.Min(1.0, elapsed / 1.5) * StopCookingProgress.ActualWidth;
+
+                if (elapsed >= 1.5)
+                {
+                    CancelRecipe(); // Re-use central cleanup
+                    lastHoveredRing = "Cooldown";
+                    segmentHoverStart = DateTime.MaxValue;
+                    StopCookingBar.Width = 0;
+                }
+            }
+            else
+            {
+                StopCookingBar.Width = 0;
+                if (lastHoveredRing == "Steps") lastHoveredRing = "None";
+            }
+        }
+
         private bool IsPointInElement(Point p, FrameworkElement el)
         {
             try {
@@ -992,7 +1448,8 @@ namespace TUIO_WPF_DEMO
                 if (button == "Confirm")
                 {
                     SendToServer("LOGOUT");
-                    CloseLogoutPopup(true); // Signal that we are logging out
+                    CloseLogoutPopup(true); 
+                    ResetUI();
                     ContextDisplay.Text = "Context: Logging out...";
                 }
                 else
@@ -1054,5 +1511,115 @@ namespace TUIO_WPF_DEMO
             });
         }
         #endregion
+        private void CheckRatingSelection(float normX, float normY)
+        {
+            double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
+            double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
+            Point p = new Point(normX * canvasW, normY * canvasH);
+
+            Border[] stars = { Star1, Star2, Star3, Star4, Star5 };
+            bool found = false;
+
+            for (int i = 0; i < stars.Length; i++)
+            {
+                if (IsPointInElement(p, stars[i]))
+                {
+                    found = true;
+                    if (lastHoveredRing != "Rating" || lastHoveredSegment != i) {
+                        lastHoveredRing = "Rating";
+                        lastHoveredSegment = i;
+                        segmentHoverStart = DateTime.Now;
+                        return;
+                    }
+
+                    double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                    RatingProgressBar.Width = Math.Min(1.0, elapsed / 1.5) * RatingProgress.ActualWidth;
+
+                    if (elapsed >= 1.5) {
+                        int rating = i + 1;
+                        SendToServer($"LOG;RATING;{{\"score\":{rating}}}");
+                        RatingPanel.Visibility = Visibility.Collapsed;
+                        DessertInquiryPanel.Visibility = Visibility.Visible;
+                        ContextDisplay.Text = $"Thank you for the {rating} star rating!";
+                        lastHoveredRing = "Cooldown";
+                        segmentHoverStart = DateTime.MaxValue;
+                    }
+                    return;
+                }
+            }
+
+            if (!found) {
+                RatingProgressBar.Width = 0;
+                if (lastHoveredRing == "Rating") lastHoveredRing = "None";
+            }
+        }
+
+        private void CheckDessertInquirySelection(float normX, float normY)
+        {
+            double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
+            double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
+            Point p = new Point(normX * canvasW, normY * canvasH);
+
+            // YES
+            if (IsPointInElement(p, BtnSeeDessert))
+            {
+                if (lastHoveredRing != "Dessert" || lastHoveredSegment != 1) {
+                    lastHoveredRing = "Dessert";
+                    lastHoveredSegment = 1;
+                    segmentHoverStart = DateTime.Now;
+                    return;
+                }
+                double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                SeeDessertBar.Width = Math.Min(1.0, elapsed / 1.5) * SeeDessertProgress.ActualWidth;
+                if (elapsed >= 1.5) {
+                    DessertInquiryPanel.Visibility = Visibility.Collapsed;
+                    _showRecipeCard = true; // Trigger recipe display
+                    SendToServer("RECIPE_ID;4"); // Suggested Cake
+                    lastHoveredRing = "Cooldown";
+                    segmentHoverStart = DateTime.MaxValue;
+                }
+                return;
+            } else { SeeDessertBar.Width = 0; }
+
+            // NO
+            if (IsPointInElement(p, BtnNoDessert))
+            {
+                if (lastHoveredRing != "Dessert" || lastHoveredSegment != 2) {
+                    lastHoveredRing = "Dessert";
+                    lastHoveredSegment = 2;
+                    segmentHoverStart = DateTime.Now;
+                    return;
+                }
+                double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                NoDessertBar.Width = Math.Min(1.0, elapsed / 1.5) * NoDessertProgress.ActualWidth;
+                if (elapsed >= 1.5) {
+                    CancelRecipe(); // Back to home
+                    lastHoveredRing = "Cooldown";
+                    segmentHoverStart = DateTime.MaxValue;
+                }
+                return;
+            } else { NoDessertBar.Width = 0; }
+
+            if (lastHoveredRing == "Dessert") lastHoveredRing = "None";
+        }
+
+        private void ResetUI()
+        {
+            AdminPanel.Visibility = Visibility.Collapsed;
+            AdminChoicePanel.Visibility = Visibility.Collapsed;
+            HomePanel.Visibility = Visibility.Collapsed;
+            RecipePanel.Visibility = Visibility.Collapsed;
+            StepPanel.Visibility = Visibility.Collapsed;
+            LogoutOverlay.Visibility = Visibility.Collapsed;
+            TimerDashboard.Visibility = Visibility.Collapsed;
+            ContextDisplay.Text = "Please Log In";
+            _isCooking = false;
+            _isHomeOpen = false;
+        }
+
+        private void BtnLogout_Click(object sender, RoutedEventArgs e)
+        {
+            OpenLogoutPopup();
+        }
     }
 }
