@@ -53,6 +53,12 @@ namespace TUIO_WPF_DEMO
         private bool _hadPositiveEmotion = false;
         private string _lastSentEmotion = "neutral";
         private DateTime _lastEmotionTime = DateTime.MinValue;
+        // --- Keyboard State Management ---
+        private bool _isKeyboardOpen = false;
+        private Grid keyboardGrid = null;
+        private TextBlock keyboardTextBox = null;
+        private List<Border> keyboardKeys = new List<Border>();
+        private string keyboardInputText = "";
 
         public MainWindow()
         {
@@ -228,6 +234,7 @@ namespace TUIO_WPF_DEMO
             else if (message.StartsWith("login_failed"))
             {
                 ContextDisplay.Text = "Context: Face Login Failed. " + message;
+                KeyboardPopUp();
             }
             else if (message.StartsWith("step"))
             {
@@ -1032,6 +1039,10 @@ namespace TUIO_WPF_DEMO
             {
                 CheckHomeSelection((float)x, (float)y);
             }
+            if (_isKeyboardOpen)
+            {
+                CheckKeyboardSelection((float)x, (float)y);
+            }
         }
 
         private void CheckRecipeDetailSelection(float normX, float normY)
@@ -1621,5 +1632,213 @@ namespace TUIO_WPF_DEMO
         {
             OpenLogoutPopup();
         }
+
+        #region keyboard
+        public void KeyboardPopUp()
+        {
+            if (_isKeyboardOpen)
+            {
+                // Toggle OFF: Close and clean up the keyboard
+                _isKeyboardOpen = false;
+                if (keyboardGrid != null)
+                {
+                    MainCanvas.Children.Remove(keyboardGrid);
+                    keyboardGrid = null;
+                }
+                keyboardKeys.Clear();
+                
+                if (lastHoveredRing == "Keyboard")
+                {
+                    lastHoveredRing = "None";
+                    lastHoveredSegment = -1;
+                }
+                ContextDisplay.Text = "Context: Keyboard Closed.";
+            }
+            else
+            {
+                // Toggle ON: Initialize and display the keyboard
+                _isKeyboardOpen = true;
+                keyboardInputText = ""; // Clear string buffer on open
+                CreateKeyboardUI();
+                ContextDisplay.Text = "Context: Keyboard Opened. Hover to type.";
+            }
+        }
+        private void CreateKeyboardUI()
+        {
+            keyboardKeys.Clear();
+
+            // 1. Create main keyboard panel container
+            keyboardGrid = new Grid
+            {
+                Width = 720,
+                Height = 320,
+                Background = new SolidColorBrush(Color.FromArgb(240, 20, 20, 20)), // Translucent dark gray
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(10)
+            };
+
+            // Define 5 vertical segments (Row 0: Input View, Rows 1-4: Key grids)
+            for (int i = 0; i < 5; i++)
+            {
+                keyboardGrid.RowDefinitions.Add(new RowDefinition { Height = i == 0 ? new GridLength(45) : new GridLength(1, GridUnitType.Star) });
+            }
+
+            // 2. Build the typed text view screen (Row 0)
+            Border displayBorder = new Border
+            {
+                Background = Brushes.Black,
+                CornerRadius = new CornerRadius(5),
+                Margin = new Thickness(2),
+                Padding = new Thickness(12, 0, 12, 0)
+            };
+            keyboardTextBox = new TextBlock
+            {
+                Text = "Gaze to type...",
+                Foreground = Brushes.Lime, // Classic terminal Green style
+                FontSize = 20,
+                FontWeight = FontWeights.Bold,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            displayBorder.Child = keyboardTextBox;
+            Grid.SetRow(displayBorder, 0);
+            keyboardGrid.Children.Add(displayBorder);
+
+            // 3. Define standard alphanumeric layout rows
+            string[][] layout = new string[][]
+            {
+                new string[] { "1", "2", "3", "4", "5", "6", "7", "8", "9", "0" },
+                new string[] { "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P" },
+                new string[] { "A", "S", "D", "F", "G", "H", "J", "K", "L", "BACK" },
+                new string[] { "Z", "X", "C", "V", "B", "N", "M", "SPACE", "CLEAR", "DONE" }
+            };
+
+            // 4. Generate keys and place inside inner row grids
+            for (int r = 0; r < layout.Length; r++)
+            {
+                Grid rowGrid = new Grid();
+                string[] rowKeys = layout[r];
+                
+                for (int c = 0; c < rowKeys.Length; c++)
+                {
+                    rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    
+                    Border keyBorder = new Border
+                    {
+                        Background = new SolidColorBrush(Color.FromRgb(55, 55, 55)),
+                        BorderBrush = Brushes.Gray,
+                        BorderThickness = new Thickness(1),
+                        CornerRadius = new CornerRadius(6),
+                        Margin = new Thickness(3)
+                    };
+
+                    // Differentiate function control buttons with unique colors
+                    if (rowKeys[c] == "DONE") keyBorder.Background = new SolidColorBrush(Color.FromRgb(34, 112, 63)); // Soft green
+                    else if (rowKeys[c] == "BACK" || rowKeys[c] == "CLEAR") keyBorder.Background = new SolidColorBrush(Color.FromRgb(138, 43, 43)); // Soft red
+                    else if (rowKeys[c] == "SPACE") keyBorder.Background = new SolidColorBrush(Color.FromRgb(46, 76, 130)); // Soft blue
+
+                    TextBlock keyText = new TextBlock
+                    {
+                        Text = rowKeys[c],
+                        Foreground = Brushes.White,
+                        FontSize = 15,
+                        FontWeight = FontWeights.Bold,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+
+                    keyBorder.Child = keyText;
+                    Grid.SetColumn(keyBorder, c);
+                    rowGrid.Children.Add(keyBorder);
+                    
+                    // Append key border element to list for tracking hit detection
+                    keyboardKeys.Add(keyBorder);
+                }
+
+                Grid.SetRow(rowGrid, r + 1);
+                keyboardGrid.Children.Add(rowGrid);
+            }
+
+            // 5. Append keyboard to canvas and layout explicitly in dead center
+            MainCanvas.Children.Add(keyboardGrid);
+            double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
+            double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
+            Canvas.SetLeft(keyboardGrid, (canvasW - 720) / 2);
+            Canvas.SetTop(keyboardGrid, (canvasH - 320) / 2);
+        }
+        private void CheckKeyboardSelection(double normX, double normY)
+        {
+            double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
+            double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
+            Point p = new Point(normX * canvasW, normY * canvasH);
+
+            int hoveredIndex = -1;
+            for (int i = 0; i < keyboardKeys.Count; i++)
+            {
+                if (IsPointInElement(p, keyboardKeys[i]))
+                {
+                    hoveredIndex = i;
+                    break;
+                }
+            }
+
+            if (hoveredIndex != -1)
+            {
+                HandleKeyboardDwell(hoveredIndex);
+            }
+            else
+            {
+                ResetAllKeyboardHighlights();
+                lastHoveredSegment = -1;
+                lastHoveredRing = "None";
+            }
+        }
+
+        private void HandleKeyboardDwell(int index)
+        {
+            double dwellTime = 1.0; // 1.0 Second dwell time requirement to execute a click
+
+            if (lastHoveredRing != "Keyboard" || lastHoveredSegment != index)
+            {
+                ResetAllKeyboardHighlights();
+                lastHoveredRing = "Keyboard";
+                lastHoveredSegment = index;
+                segmentHoverStart = DateTime.Now;
+                return;
+            }
+
+            // Handle immediate key selection input cooldown block
+            if (segmentHoverStart > DateTime.Now) return; 
+
+            double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+            double progress = Math.Max(0, Math.Min(1.0, elapsed / dwellTime));
+
+            Border target = keyboardKeys[index];
+            target.BorderBrush = Brushes.Gold;
+            target.BorderThickness = new Thickness(1 + (progress * 6)); // Thickness blooms out visually as dwell charges up
+
+            if (elapsed >= dwellTime)
+            {
+                string keyText = (target.Child as TextBlock)?.Text;
+                HandleKeyboardKeyPress(keyText);
+
+                // Put key on selection lock cooldown for 1.2s so it doesn't infinitely spam the letter
+                segmentHoverStart = DateTime.Now.AddSeconds(1.2); 
+                
+                // Immediate selection color feedback
+                target.BorderBrush = Brushes.Lime;
+                target.BorderThickness = new Thickness(4);
+            }
+        }
+
+        private void ResetAllKeyboardHighlights()
+        {
+            foreach (var key in keyboardKeys)
+            {
+                key.BorderBrush = Brushes.Gray;
+                key.BorderThickness = new Thickness(1);
+            }
+        }
+
+        #endregion
     }
 }
