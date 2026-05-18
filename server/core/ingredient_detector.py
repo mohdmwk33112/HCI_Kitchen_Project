@@ -4,6 +4,7 @@ import sys
 import time
 import torch
 import hashlib
+import threading
 import numpy as np
 from collections import defaultdict
 from pathlib import Path
@@ -39,6 +40,95 @@ class IngredientDetector:
         self.imgsz = imgsz
         self.trail_len = trail_len
         self.trail_map = defaultdict(list)
+
+        # Threading for async YOLO
+        self.yolo_frame = None
+        self.yolo_detections = []
+        self.yolo_track_ids = []
+        self.yolo_boxes_xyxy = []
+        self.new_frame_event = threading.Event()
+        self.lock = threading.Lock()
+        self.yolo_thread_running = False
+        
+        if self.model is not None:
+            self.yolo_thread_running = True
+            self.yolo_thread = threading.Thread(target=self._yolo_worker, daemon=True)
+            self.yolo_thread.start()
+
+    def __del__(self):
+        self.yolo_thread_running = False
+        if hasattr(self, "new_frame_event"):
+            self.new_frame_event.set()
+
+    def _yolo_worker(self):
+        while self.yolo_thread_running:
+            # Wait for a new frame to process
+            self.new_frame_event.wait()
+            if not self.yolo_thread_running:
+                break
+                
+            # Get the frame
+            with self.lock:
+                frame_to_process = self.yolo_frame.copy() if self.yolo_frame is not None else None
+                self.new_frame_event.clear()
+                
+            if frame_to_process is not None:
+                try:
+                    h, w = frame_to_process.shape[:2]
+                    results = self.model.track(
+                        frame_to_process,
+                        imgsz=self.imgsz,
+                        conf=self.conf,
+                        iou=self.iou,
+                        device=self.device,
+                        tracker=f"{self.tracker}.yaml",
+                        persist=True,
+                        verbose=False
+                    )
+                    r = results[0]
+                    new_detections = []
+                    new_track_ids = []
+                    new_boxes_xyxy = []
+                    
+                    if r.boxes is not None:
+                        has_ids = r.boxes.id is not None
+                        for i in range(len(r.boxes)):
+                            box = r.boxes[i]
+                            b = box.xyxy[0].tolist()
+                            conf = float(box.conf[0])
+                            cls = int(box.cls[0])
+                            label = self.model.names[cls]
+                            
+                            track_id = int(box.id[0]) if has_ids else -1
+
+                            norm_x = b[0] / w
+                            norm_y = b[1] / h
+                            norm_w = (b[2] - b[0]) / w
+                            norm_h = (b[3] - b[1]) / h
+
+                            new_detections.append({
+                                "label": label,
+                                "confidence": round(conf, 2),
+                                "x": round(norm_x, 4),
+                                "y": round(norm_y, 4),
+                                "w": round(norm_w, 4),
+                                "h": round(norm_h, 4),
+                                "track_id": track_id
+                            })
+
+                            if has_ids:
+                                new_track_ids.append(track_id)
+                                new_boxes_xyxy.append(b)
+                                
+                    with self.lock:
+                        self.yolo_detections = new_detections
+                        self.yolo_track_ids = new_track_ids
+                        self.yolo_boxes_xyxy = new_boxes_xyxy
+                        
+                except Exception as e:
+                    print(f"[IngredientDetector] Error in YOLO tracking inference: {e}")
+                    
+            time.sleep(0.01)
 
     def resolve_device(self, requested: str) -> str:
         """Resolve available hardware acceleration device."""
@@ -93,9 +183,10 @@ class IngredientDetector:
         # 1. Run High-Precision HSV Red Laser Dot Detection First (ultra-fast, CPU bound)
         try:
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-            lower_red1 = np.array([0, 100, 200])
+            # Balanced saturation and value minimum thresholds for high-light resilience + high sensitivity
+            lower_red1 = np.array([0, 135, 215])
             upper_red1 = np.array([10, 255, 255])
-            lower_red2 = np.array([160, 100, 200])
+            lower_red2 = np.array([160, 135, 215])
             upper_red2 = np.array([180, 255, 255])
             
             mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
@@ -111,10 +202,17 @@ class IngredientDetector:
             best_area = 0.0
             for c in contours:
                 area = cv2.contourArea(c)
-                if 1 < area < 250:
-                    if area > best_area:
-                        best_area = area
-                        best_contour = c
+                # Expand allowed area range (typically 1.5 to 180 pixels at 640x480)
+                if 1.5 < area < 180:
+                    # Circularity check: 4 * pi * Area / Perimeter^2
+                    perimeter = cv2.arcLength(c, True)
+                    if perimeter > 0:
+                        circularity = 4 * np.pi * area / (perimeter * perimeter)
+                        # Relaxed circularity to tolerate motion-blurred ovals when moving the laser wand
+                        if circularity > 0.25:
+                            if area > best_area:
+                                best_area = area
+                                best_contour = c
             
             if best_contour is not None:
                 M = cv2.moments(best_contour)
@@ -153,51 +251,19 @@ class IngredientDetector:
             track_ids.append(9999)
             boxes_xyxy.append([cx - 5, cy - 5, cx + 5, cy + 5])
         else:
-            # Laser inactive: run full YOLO deep learning inference for ingredient tracking
+            # Laser inactive: run full YOLO deep learning inference asynchronously
             if self.model is not None:
-                try:
-                    results = self.model.track(
-                        frame,
-                        imgsz=self.imgsz,
-                        conf=self.conf,
-                        iou=self.iou,
-                        device=self.device,
-                        tracker=f"{self.tracker}.yaml",
-                        persist=True,
-                        verbose=False
-                    )
-                    r = results[0]
-                    if r.boxes is not None:
-                        has_ids = r.boxes.id is not None
-                        for i in range(len(r.boxes)):
-                            box = r.boxes[i]
-                            b = box.xyxy[0].tolist()
-                            conf = float(box.conf[0])
-                            cls = int(box.cls[0])
-                            label = self.model.names[cls]
-                            
-                            track_id = int(box.id[0]) if has_ids else -1
-
-                            norm_x = b[0] / w
-                            norm_y = b[1] / h
-                            norm_w = (b[2] - b[0]) / w
-                            norm_h = (b[3] - b[1]) / h
-
-                            detections.append({
-                                "label": label,
-                                "confidence": round(conf, 2),
-                                "x": round(norm_x, 4),
-                                "y": round(norm_y, 4),
-                                "w": round(norm_w, 4),
-                                "h": round(norm_h, 4),
-                                "track_id": track_id
-                            })
-
-                            if has_ids:
-                                track_ids.append(track_id)
-                                boxes_xyxy.append(b)
-                except Exception as e:
-                    print(f"[IngredientDetector] Error in YOLO tracking inference: {e}")
+                # If background thread is ready to accept a frame, copy and send it
+                if not self.new_frame_event.is_set():
+                    with self.lock:
+                        self.yolo_frame = frame.copy()
+                    self.new_frame_event.set()
+                
+                # Fetch the latest processed detections instantly (non-blocking)
+                with self.lock:
+                    detections = list(self.yolo_detections)
+                    track_ids = list(self.yolo_track_ids)
+                    boxes_xyxy = list(self.yolo_boxes_xyxy)
 
         # 3. Update and draw historical movement trails
         if len(track_ids) > 0 and self.trail_len > 0:
