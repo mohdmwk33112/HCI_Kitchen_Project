@@ -8,7 +8,7 @@ from cooking.cooking_session import send_recipe
 # ── Configuration ──────────────────────────────────────────────────────────
 PEOPLE_DIR = os.path.join("face", "people")
 HOST = "0.0.0.0"
-PORT = 65434
+PORT = 65450
 
 def handle_client():
     # ── 0. Initialize Database ──────────────────────────────────────────
@@ -55,6 +55,17 @@ def handle_client():
                 else:
                     conn_obj.sendall("error;missing_name\n".encode("utf-8"))
 
+            elif cmd == "REGISTER_USER":
+                if len(parts) > 2:
+                    name = parts[1]
+                    profession = parts[2]
+                    print(f"[Server] Register User requested for: {name} ({profession})")
+                    vision.capture_name = name
+                    vision.capture_profession = profession
+                    vision.capture_pending = True
+                else:
+                    conn_obj.sendall("error;missing_name_or_profession\n".encode("utf-8"))
+
             elif cmd == "LIST_USERS":
                 import glob
                 files = glob.glob(os.path.join(PEOPLE_DIR, "*.jpg"))
@@ -66,8 +77,13 @@ def handle_client():
                 if len(parts) > 1:
                     name = parts[1]
                     path = os.path.join(PEOPLE_DIR, f"{name}.jpg")
+                    file_removed = False
                     if os.path.exists(path):
                         os.remove(path)
+                        file_removed = True
+                    with db.get_conn() as conn_db:
+                        conn_db.execute("DELETE FROM USER WHERE name = ?", (name,))
+                    if file_removed:
                         print(f"[Server] Deleted user: {name}")
                         vision.face_handler.load_known_faces() # Reload encoding DB
                         conn_obj.sendall("delete_success\n".encode("utf-8"))
@@ -75,6 +91,27 @@ def handle_client():
                         conn_obj.sendall("error;user_not_found\n".encode("utf-8"))
                 else:
                     conn_obj.sendall("error;missing_name\n".encode("utf-8"))
+
+            elif cmd == "EDIT_USER":
+                if len(parts) > 2:
+                    old_name = parts[1]
+                    new_name = parts[2]
+                    old_path = os.path.join(PEOPLE_DIR, f"{old_name}.jpg")
+                    new_path = os.path.join(PEOPLE_DIR, f"{new_name}.jpg")
+                    file_renamed = False
+                    if os.path.exists(old_path):
+                        os.rename(old_path, new_path)
+                        file_renamed = True
+                    with db.get_conn() as conn_db:
+                        conn_db.execute("UPDATE USER SET name = ? WHERE name = ?", (new_name, old_name))
+                    if file_renamed:
+                        print(f"[Server] Renamed user: {old_name} -> {new_name}")
+                        vision.face_handler.load_known_faces() # Reload encoding DB
+                        conn_obj.sendall("edit_success\n".encode("utf-8"))
+                    else:
+                        conn_obj.sendall("error;user_not_found\n".encode("utf-8"))
+                else:
+                    conn_obj.sendall("error;missing_parameters\n".encode("utf-8"))
 
             # ── Circular Menu State Control ────────────────────────────
             elif cmd == "MENU_OPEN":

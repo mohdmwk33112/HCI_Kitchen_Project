@@ -15,6 +15,8 @@ namespace TUIO_WPF_DEMO
     public partial class MainWindow : Window, TuioListener
     {
         private List<Border> adminDeleteButtons = new List<Border>();
+        private List<Border> adminEditButtons = new List<Border>();
+        private string _editingUserName = "";
         private TuioClient client;
         private TcpClient pythonClient;
         private NetworkStream stream;
@@ -26,7 +28,7 @@ namespace TUIO_WPF_DEMO
         private StackPanel ingredientListPanel;
 
 
-        
+
         // Cooking Menu State (Persistent)
         private FrameworkElement cookingMenu;
         private List<Path> innerSegmentList;
@@ -37,7 +39,7 @@ namespace TUIO_WPF_DEMO
         private int lastHoveredSegment = -1;
         private string lastHoveredRing = "None"; // "Inner" or "Outer"
         private Point menuFixedCenter;
-        
+
         private System.Windows.Threading.DispatcherTimer kitchenTimer;
         private int remainingSeconds = 0;
 
@@ -53,12 +55,26 @@ namespace TUIO_WPF_DEMO
         private bool _hadPositiveEmotion = false;
         private string _lastSentEmotion = "neutral";
         private DateTime _lastEmotionTime = DateTime.MinValue;
+        private string _userSkillLevel = "Chef"; // "Chef" or "Home Cook"
         // --- Keyboard State Management ---
         private bool _isKeyboardOpen = false;
         private Grid keyboardGrid = null;
         private TextBlock keyboardTextBox = null;
         private List<Border> keyboardKeys = new List<Border>();
         private string keyboardInputText = "";
+
+        // --- Sign-Up State Management ---
+        private int _signUpPhase = 1;
+        private string _signUpName = "";
+        private string _signUpProfession = "";
+        private System.Windows.Threading.DispatcherTimer _signUpCountdownTimer;
+        private int _signUpCountdownRemaining = 3;
+
+        // --- Admin Capture State Management ---
+        private int _adminCountdownRemaining = 3;
+        private System.Windows.Threading.DispatcherTimer _adminCountdownTimer;
+        private bool _isAdminCountdownRunning = false;
+        private string _adminSelectedProfession = "Home Cook";
 
         public MainWindow()
         {
@@ -87,7 +103,7 @@ namespace TUIO_WPF_DEMO
             {
                 // 1. Connect to the IP and Port from your lab code (localhost:5000)
                 pythonClient = new TcpClient();
-                await pythonClient.ConnectAsync("127.0.0.1", 65434);
+                await pythonClient.ConnectAsync("127.0.0.1", 65450);
                 stream = pythonClient.GetStream();
 
                 System.Diagnostics.Debug.WriteLine("Connected to Python Server!");
@@ -112,7 +128,7 @@ namespace TUIO_WPF_DEMO
                         if (message == null) break; // Disconnected
 
                         System.Diagnostics.Debug.WriteLine("Message from Python: " + message);
-                        
+
                         // Process the message on the UI thread
                         Dispatcher.Invoke(() => HandleServerMessage(message));
                     }
@@ -131,7 +147,7 @@ namespace TUIO_WPF_DEMO
                 try
                 {
                     var data = JsonSerializer.Deserialize<Dictionary<string, object>>(message);
-                    
+
                     // 1. Handle Continuous Pointer Tracking
                     if (data.ContainsKey("type") && data["type"].ToString() == "pointer")
                     {
@@ -148,12 +164,13 @@ namespace TUIO_WPF_DEMO
                     if (data.ContainsKey("type") && data["type"].ToString() == "emotion")
                     {
                         string emotion = data["value"].ToString();
-                        
+
                         // TRACK EMOTION FOR ADAPTIVE UI
                         if (emotion == "happy") _hadPositiveEmotion = true;
-                        
+
                         // Send emotion to server if cooking and changed (throttle 1s)
-                        if (_isCooking && emotion != _lastSentEmotion && (DateTime.Now - _lastEmotionTime).TotalSeconds > 1.0) {
+                        if (_isCooking && emotion != _lastSentEmotion && (DateTime.Now - _lastEmotionTime).TotalSeconds > 1.0)
+                        {
                             SendToServer($"EMOTION;{emotion}");
                             _lastSentEmotion = emotion;
                             _lastEmotionTime = DateTime.Now;
@@ -177,7 +194,7 @@ namespace TUIO_WPF_DEMO
 
                         string gesture = data["gesture"].ToString();
                         double confidence = double.Parse(data["confidence"].ToString());
-                        
+
                         double normX = lastCamX; // Use last known pointer pos for context
                         double normY = lastCamY;
                         if (data.ContainsKey("x") && data.ContainsKey("y"))
@@ -203,21 +220,25 @@ namespace TUIO_WPF_DEMO
                 string[] parts = message.Split(';');
                 string userName = parts.Length > 1 ? parts[1] : "Unknown";
                 string side = parts.Length > 2 ? parts[2] : "Left";
-                
+                _userSkillLevel = parts.Length > 3 ? parts[3] : "Chef";
+
                 _userSide = side;
                 ShiftContent(side);
                 TimerDashboard.Visibility = Visibility.Visible;
                 HomePanel.Visibility = Visibility.Visible;
                 _isHomeOpen = true;
-                
+
                 ContextDisplay.Text = $"Welcome, {userName}";
-                
+
                 // ADMIN ROLE SEPARATION:
-                if (userName.ToLower() == "wael") {
+                if (userName.ToLower() == "wael")
+                {
                     AdminChoicePanel.Visibility = Visibility.Visible;
                     HomePanel.Visibility = Visibility.Collapsed;
                     ContextDisplay.Text = "Administrator Access";
-                } else {
+                }
+                else
+                {
                     HomePanel.Visibility = Visibility.Visible;
                     AdminChoicePanel.Visibility = Visibility.Collapsed;
                     SendToServer("GET_SUGGESTION");
@@ -226,7 +247,8 @@ namespace TUIO_WPF_DEMO
             else if (message.StartsWith("suggestion"))
             {
                 string[] parts = message.Split(';');
-                if (parts.Length > 2) {
+                if (parts.Length > 2)
+                {
                     string suggName = parts[2];
                     ContextDisplay.Text = $"Context: I suggest making {suggName}. Scan TUIO to begin!";
                 }
@@ -254,7 +276,15 @@ namespace TUIO_WPF_DEMO
 
                     StepNumberText.Text = $"STEP {current} OF {total}";
                     StepInstructionText.Text = parts[3];
-                    ContextDisplay.Text = "Context: Cooking in progress...";
+
+                    // Show Home Cook badge and adjusted hint if applicable
+                    bool isHomeCook = _userSkillLevel.Trim().ToLower() == "home cook";
+                    if (HomeCookBadge != null)
+                        HomeCookBadge.Visibility = isHomeCook ? Visibility.Visible : Visibility.Collapsed;
+
+                    ContextDisplay.Text = isHomeCook
+                        ? "🍳 Home Cook Mode — Take your time, read carefully!"
+                        : "Context: Cooking in progress...";
 
                     // Update navigation hints
                     PrevStepHint.Visibility = current > 1 ? Visibility.Visible : Visibility.Hidden;
@@ -266,10 +296,13 @@ namespace TUIO_WPF_DEMO
                 StepPanel.Visibility = Visibility.Collapsed;
                 _isCooking = false;
 
-                if (_hadPositiveEmotion) {
+                if (_hadPositiveEmotion)
+                {
                     RatingPanel.Visibility = Visibility.Visible;
                     ContextDisplay.Text = "Great job!";
-                } else {
+                }
+                else
+                {
                     DessertInquiryPanel.Visibility = Visibility.Visible;
                     ContextDisplay.Text = "Finished!";
                 }
@@ -286,9 +319,9 @@ namespace TUIO_WPF_DEMO
                 StepPanel.Visibility = Visibility.Collapsed;
                 _isHomeOpen = false;
                 _isCooking = false;
-                
+
                 if (ingredientListPanel != null) ingredientListPanel.Children.Clear();
-                
+
                 // Return to initial centered state
                 _userSide = "Center";
                 ShiftContent("Center");
@@ -296,6 +329,36 @@ namespace TUIO_WPF_DEMO
                 if (cameraPointer != null) cameraPointer.Visibility = Visibility.Collapsed;
 
                 ContextDisplay.Text = "Please Log In";
+            }
+            else if (message == "trigger_signup")
+            {
+                HomePanel.Visibility = Visibility.Collapsed;
+                RecipePanel.Visibility = Visibility.Collapsed;
+                StepPanel.Visibility = Visibility.Collapsed;
+                RatingPanel.Visibility = Visibility.Collapsed;
+                DessertInquiryPanel.Visibility = Visibility.Collapsed;
+                AdminChoicePanel.Visibility = Visibility.Collapsed;
+                AdminPanel.Visibility = Visibility.Collapsed;
+
+                SignUpPanel.Visibility = Visibility.Visible;
+                ContextDisplay.Text = "Please Create a Profile";
+                TransitionToSignUpPhase(1);
+            }
+            else if (message.StartsWith("signup_success"))
+            {
+                string[] parts = message.Split(';');
+                string name = parts.Length > 1 ? parts[1] : "User";
+                ContextDisplay.Text = $"Welcome, {name}!";
+
+                SignUpPanel.Visibility = Visibility.Collapsed;
+                HomePanel.Visibility = Visibility.Visible;
+                _isHomeOpen = true;
+
+                _userSide = "Center";
+                ShiftContent("Center");
+                TimerDashboard.Visibility = Visibility.Visible;
+
+                SendToServer("GET_SUGGESTION");
             }
             else if (message.StartsWith("error"))
             {
@@ -313,8 +376,11 @@ namespace TUIO_WPF_DEMO
                 string[] parts = message.Split(';');
                 AdminUserListPanel.Children.Clear();
                 adminDeleteButtons.Clear();
-                for (int i = 1; i < parts.Length; i++) {
-                    if (!string.IsNullOrEmpty(parts[i])) {
+                adminEditButtons.Clear();
+                for (int i = 1; i < parts.Length; i++)
+                {
+                    if (!string.IsNullOrEmpty(parts[i]))
+                    {
                         AddUserToAdminList(parts[i]);
                     }
                 }
@@ -324,36 +390,56 @@ namespace TUIO_WPF_DEMO
                 ContextDisplay.Text = "User deleted successfully.";
                 SendToServer("LIST_USERS"); // Refresh list
             }
+            else if (message.StartsWith("edit_success"))
+            {
+                ContextDisplay.Text = "User renamed successfully.";
+                _editingUserName = "";
+                TxtNewUserName.Text = "NewUser";
+                keyboardInputText = "NewUser";
+                if (keyboardTextBox != null) keyboardTextBox.Text = "NewUser";
+
+                var sp = BtnCapture.Child as StackPanel;
+                if (sp != null && sp.Children[0] is StackPanel innerSp && innerSp.Children[1] is TextBlock tb)
+                {
+                    tb.Text = "CAPTURE & SAVE";
+                }
+
+                SendToServer("LIST_USERS"); // Refresh list
+            }
             else if (message.Contains(";") && !message.StartsWith("gestures_"))
             {
                 // Handle recipe header (title;scenario;ingredients...)
                 string[] parts = message.Split(';');
                 string title = parts[0];
                 string overview = parts[1];
-                
+
                 // Populate the new RecipePanel
                 RecipeTitleText.Text = title.ToUpper();
                 RecipeOverviewText.Text = overview;
-                
+
                 StringBuilder sb = new StringBuilder();
-                for (int i = 2; i < parts.Length; i += 3) {
+                for (int i = 2; i < parts.Length; i += 3)
+                {
                     if (i + 2 < parts.Length)
-                        sb.AppendLine($"• {parts[i]} ({parts[i+1]} {parts[i+2]})");
+                        sb.AppendLine($"• {parts[i]} ({parts[i + 1]} {parts[i + 2]})");
                 }
                 RecipeIngredientsText.Text = sb.ToString();
-                
+
                 // ONLY show the panel if it was triggered by a TUIO scan AND not currently cooking
-                if (_showRecipeCard && !_isCooking && AdminChoicePanel.Visibility != Visibility.Visible) {
+                if (_showRecipeCard && !_isCooking && AdminChoicePanel.Visibility != Visibility.Visible)
+                {
                     HomePanel.Visibility = Visibility.Collapsed;
                     AdminChoicePanel.Visibility = Visibility.Collapsed;
                     _isHomeOpen = false;
                     RecipePanel.Visibility = Visibility.Visible;
-                    ContextDisplay.Text = "Recipe Details"; 
+                    ContextDisplay.Text = "Recipe Details";
                     _showRecipeCard = false; // Reset flag only after successful display
-                } else if (!_isCooking) {
+                }
+                else if (!_isCooking)
+                {
                     ContextDisplay.Text = $"Ready to cook {title}.";
                 }
-                
+
                 SendToServer("START_GESTURES");
             }
         }
@@ -362,12 +448,16 @@ namespace TUIO_WPF_DEMO
         {
             if (cameraPointer == null)
             {
-                cameraPointer = new Ellipse { 
-                    Width = 40, Height = 40, 
-                    Stroke = Brushes.Cyan, StrokeThickness = 3,
+                cameraPointer = new Ellipse
+                {
+                    Width = 40,
+                    Height = 40,
+                    Stroke = Brushes.Cyan,
+                    StrokeThickness = 3,
                     Fill = new SolidColorBrush(Color.FromArgb(100, 0, 255, 255)),
                     IsHitTestVisible = false
                 };
+                Panel.SetZIndex(cameraPointer, 99999);
                 MainCanvas.Children.Add(cameraPointer);
             }
             cameraPointer.Visibility = Visibility.Visible;
@@ -379,7 +469,8 @@ namespace TUIO_WPF_DEMO
             // Initialize the panel if it doesn't exist
             if (ingredientListPanel == null)
             {
-                ingredientListPanel = new StackPanel {
+                ingredientListPanel = new StackPanel
+                {
                     Orientation = Orientation.Vertical,
                     IsHitTestVisible = false
                 };
@@ -399,7 +490,8 @@ namespace TUIO_WPF_DEMO
 
             if (uniqueIngredients.Count > 0)
             {
-                ingredientListPanel.Children.Add(new TextBlock {
+                ingredientListPanel.Children.Add(new TextBlock
+                {
                     Text = "INGREDIENTS",
                     Foreground = Brushes.Yellow,
                     FontSize = 14,
@@ -410,7 +502,8 @@ namespace TUIO_WPF_DEMO
 
                 foreach (var label in uniqueIngredients)
                 {
-                    ingredientListPanel.Children.Add(new TextBlock {
+                    ingredientListPanel.Children.Add(new TextBlock
+                    {
                         Text = "• " + label.ToUpper(),
                         Foreground = Brushes.White,
                         FontSize = 24,
@@ -475,14 +568,16 @@ namespace TUIO_WPF_DEMO
             cookingMenu = CreateCircularMenu();
             MainCanvas.Children.Add(cookingMenu);
             UpdateElementPosition(cookingMenu, (float)x, (float)y);
-            
+
             double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
             double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
             menuFixedCenter = new Point(x * canvasW, y * canvasH);
-            
+
             // Highlight existing cursors
-            foreach(var el in cursorElements.Values) {
-                if (el is Grid g && g.Children[0] is Shape s) {
+            foreach (var el in cursorElements.Values)
+            {
+                if (el is Grid g && g.Children[0] is Shape s)
+                {
                     s.Stroke = Brushes.Gold;
                     s.StrokeThickness = 4;
                 }
@@ -495,10 +590,12 @@ namespace TUIO_WPF_DEMO
             _isMenuOpen = false;
             SendToServer("MENU_CLOSED");
             RemoveActiveMenu();
-            
+
             // Reset cursors
-            foreach(var el in cursorElements.Values) {
-                if (el is Grid g && g.Children[0] is Shape s) {
+            foreach (var el in cursorElements.Values)
+            {
+                if (el is Grid g && g.Children[0] is Shape s)
+                {
                     s.Stroke = Brushes.Blue;
                     s.StrokeThickness = 2;
                 }
@@ -526,8 +623,9 @@ namespace TUIO_WPF_DEMO
                 // If menu is open, TUIO cursors become selection pointers
                 Brush fill = _isMenuOpen ? Brushes.White : new SolidColorBrush(Color.FromRgb(52, 152, 219));
                 Brush stroke = _isMenuOpen ? new SolidColorBrush(Color.FromRgb(241, 196, 15)) : Brushes.White;
-                
+
                 Grid container = CreateContainer(25, 25, fill, stroke, true, "");
+                Panel.SetZIndex(container, 99999);
                 cursorElements[c.SessionID] = container;
                 MainCanvas.Children.Add(container);
                 UpdateElementPosition(container, c.X, c.Y);
@@ -568,13 +666,15 @@ namespace TUIO_WPF_DEMO
                 UpdateElementPosition(container, o.X, o.Y, o.Angle);
 
                 // ID 10 opens the circular menu (unused id)
-                if (o.SymbolID == 10) {
+                if (o.SymbolID == 10)
+                {
                     OpenCircularMenu(o.X, o.Y);
                     return;
                 }
 
                 // PREVENTION: Don't let TUIO objects interrupt an open recipe view or cooking session
-                if (RecipePanel.Visibility == Visibility.Visible || _isCooking) {
+                if (RecipePanel.Visibility == Visibility.Visible || _isCooking)
+                {
                     System.Diagnostics.Debug.WriteLine($"Ignored TUIO {o.SymbolID} because a recipe is already open.");
                     return;
                 }
@@ -585,7 +685,7 @@ namespace TUIO_WPF_DEMO
                 // Map TUIO SymbolID to Recipe ID (0->1, 1->2, etc.)
                 int recipeId = o.SymbolID + 1;
                 SendToServer($"RECIPE_ID;{recipeId}");
-                
+
                 System.Diagnostics.Debug.WriteLine($"TUIO {o.SymbolID} scanned. Requesting Recipe {recipeId}");
             });
         }
@@ -598,23 +698,29 @@ namespace TUIO_WPF_DEMO
                     UpdateElementPosition(objectElements[o.SessionID], o.X, o.Y, o.Angle);
 
                     // NAVIGATION: If already cooking, use rotation for steps
-                    if (_isCooking && StepPanel.Visibility == Visibility.Visible) {
-                        if (o.RotationSpeed > 2.5f) { // Fast flick Right
-                             SendToServer("NEXT");
-                             System.Diagnostics.Debug.WriteLine("Next Step via TUIO Rotation");
-                        } else if (o.RotationSpeed < -2.5f) { // Fast flick Left
-                             SendToServer("PREV");
-                             System.Diagnostics.Debug.WriteLine("Prev Step via TUIO Rotation");
+                    if (_isCooking && StepPanel.Visibility == Visibility.Visible)
+                    {
+                        if (o.RotationSpeed > 2.5f)
+                        { // Fast flick Right
+                            SendToServer("NEXT");
+                            System.Diagnostics.Debug.WriteLine("Next Step via TUIO Rotation");
+                        }
+                        else if (o.RotationSpeed < -2.5f)
+                        { // Fast flick Left
+                            SendToServer("PREV");
+                            System.Diagnostics.Debug.WriteLine("Prev Step via TUIO Rotation");
                         }
                     }
                     // If user rotates RIGHT, confirm recipe and start steps
-                    else if (o.RotationSpeed > 1.8f && !_isCooking && RecipePanel.Visibility == Visibility.Visible) {
-                         SendToServer("CONFIRM");
-                         _isCooking = true;
-                         System.Diagnostics.Debug.WriteLine("Recipe Confirmed via TUIO Rotation");
+                    else if (o.RotationSpeed > 1.8f && !_isCooking && RecipePanel.Visibility == Visibility.Visible)
+                    {
+                        SendToServer("CONFIRM");
+                        _isCooking = true;
+                        System.Diagnostics.Debug.WriteLine("Recipe Confirmed via TUIO Rotation");
                     }
                     // If user rotates LEFT, cancel recipe selection
-                    else if (o.RotationSpeed < -1.8f && !_isCooking && RecipePanel.Visibility == Visibility.Visible) {
+                    else if (o.RotationSpeed < -1.8f && !_isCooking && RecipePanel.Visibility == Visibility.Visible)
+                    {
                         CancelRecipe();
                         System.Diagnostics.Debug.WriteLine("Recipe Cancelled via TUIO Rotation");
                     }
@@ -714,7 +820,7 @@ namespace TUIO_WPF_DEMO
         #region Cooking Menu
         private FrameworkElement CreateCircularMenu()
         {
-            double maxRadius = 260; 
+            double maxRadius = 260;
             double innerR = 60;
             double middleR = 150;
             double center = maxRadius;
@@ -722,7 +828,7 @@ namespace TUIO_WPF_DEMO
             Grid menuRoot = new Grid { Width = maxRadius * 2, Height = maxRadius * 2 };
             innerSegmentList = new List<Path>();
             outerSegmentList = new List<Path>();
-            
+
             var mainItems = new[] {
                 new { Label = "Timer", Emoji = "⏱️", Color = Color.FromRgb(255, 107, 107) },       // 0: Top
                 new { Label = "Recipes", Emoji = "📖", Color = Color.FromRgb(78, 205, 196) },     // 1
@@ -744,7 +850,7 @@ namespace TUIO_WPF_DEMO
                 seg.Fill = new SolidColorBrush(Color.FromArgb(200, baseColor.R, baseColor.G, baseColor.B));
                 seg.Stroke = Brushes.White;
                 seg.StrokeThickness = 2;
-                
+
                 innerSegmentList.Add(seg);
                 menuRoot.Children.Add(seg);
 
@@ -752,11 +858,11 @@ namespace TUIO_WPF_DEMO
                 double midRad = ((i * angleStep + (i + 1) * angleStep) / 2.0 - 90) * (Math.PI / 180.0);
                 double lx = center + Math.Cos(midRad) * (innerR + middleR) / 2.0;
                 double ly = center + Math.Sin(midRad) * (innerR + middleR) / 2.0;
-                
+
                 StackPanel sp = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
                 sp.Children.Add(new TextBlock { Text = mainItems[i].Emoji, FontSize = 20, HorizontalAlignment = HorizontalAlignment.Center });
                 sp.Children.Add(new TextBlock { Text = mainItems[i].Label, Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center });
-                
+
                 Canvas cv = new Canvas();
                 Grid g = new Grid { Width = 60, Height = 40 }; g.Children.Add(sp);
                 Canvas.SetLeft(g, lx - 30); Canvas.SetTop(g, ly - 20);
@@ -770,7 +876,7 @@ namespace TUIO_WPF_DEMO
         private void ShowOuterRing(string type)
         {
             if (cookingMenu == null || activeSubMenu == type) return;
-            
+
             // Clean previous outer ring
             Grid menu = cookingMenu as Grid;
             var toRemove = new List<UIElement>();
@@ -787,15 +893,20 @@ namespace TUIO_WPF_DEMO
             double outerR = 250;
 
             string[] labels; string[] emojis; Color ringColor;
-            if (type == "Timer") {
+            if (type == "Timer")
+            {
                 labels = new[] { "5m", "10m", "15m", "20m", "30m", "45m", "60m", "CLOSE" };
                 emojis = new[] { "⏲️", "⏲️", "⏲️", "⏲️", "⏲️", "⏲️", "⏲️", "✖️" };
                 ringColor = Color.FromRgb(255, 107, 107);
-            } else if (type == "Heat") {
+            }
+            else if (type == "Heat")
+            {
                 labels = new[] { "Low", "Med", "High", "Sear", "Warm", "CLOSE" };
                 emojis = new[] { "🧊", "🌤️", "🔥", "💥", "♨️", "✖️" };
                 ringColor = Color.FromRgb(255, 159, 64);
-            } else {
+            }
+            else
+            {
                 labels = new[] { "Salad", "Soup", "Pasta", "Steak", "CLOSE" };
                 emojis = new[] { "🥗", "🍲", "🍝", "🥩", "✖️" };
                 ringColor = Color.FromRgb(78, 205, 196);
@@ -809,14 +920,14 @@ namespace TUIO_WPF_DEMO
                 seg.Fill = new SolidColorBrush(Color.FromArgb(220, ringColor.R, ringColor.G, ringColor.B));
                 seg.Stroke = Brushes.White;
                 seg.StrokeThickness = 2;
-                
+
                 menu.Children.Add(seg);
                 outerSegmentList.Add(seg);
 
                 double midRad = ((i * step + (i + 1) * step) / 2.0 - 90) * (Math.PI / 180.0);
                 double lx = center + Math.Cos(midRad) * (innerR + outerR) / 2.0;
                 double ly = center + Math.Sin(midRad) * (innerR + outerR) / 2.0;
-                
+
                 TextBlock txt = new TextBlock { Text = emojis[i] + " " + labels[i], Foreground = Brushes.White, FontSize = 10, FontWeight = FontWeights.Bold };
                 Canvas cv = new Canvas { Tag = "OuterLabel" };
                 Canvas.SetLeft(txt, lx - 20); Canvas.SetTop(txt, ly - 10);
@@ -866,7 +977,7 @@ namespace TUIO_WPF_DEMO
                 lastHoveredRing = ring;
                 lastHoveredSegment = index;
                 segmentHoverStart = DateTime.Now; // Reset dwell timer for the NEW target
-                
+
                 if (ring == "Inner") { HighlightInner(index, 0); HighlightOuter(-1, 0); }
                 else { HighlightOuter(index, 0); HighlightInner(-1, 0); }
                 return;
@@ -883,7 +994,7 @@ namespace TUIO_WPF_DEMO
             // 3. Normal Dwell Logic
             double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
             double progress = Math.Max(0, Math.Min(1.0, elapsed / 1.0)); // 1s dwell
-            
+
             if (ring == "Inner") HighlightInner(index, progress);
             else HighlightOuter(index, progress);
 
@@ -913,7 +1024,8 @@ namespace TUIO_WPF_DEMO
                 StartKitchenTimer(mins);
             }
             else if (label == "CLOSE") ShowOuterRing("None");
-            else {
+            else
+            {
                 // For Heat or Recipes
                 ContextDisplay.Text = $"Context: Selected {label}";
             }
@@ -924,12 +1036,15 @@ namespace TUIO_WPF_DEMO
             var segments = outerSegmentList;
             for (int i = 0; i < segments.Count; i++)
             {
-                if (i == index) {
+                if (i == index)
+                {
                     double p = Math.Max(0, Math.Min(1.0, progress));
                     segments[i].Stroke = p >= 1.0 ? Brushes.Lime : Brushes.Gold;
                     segments[i].StrokeThickness = 1 + (5 * p);
                     segments[i].Opacity = 1.0;
-                } else {
+                }
+                else
+                {
                     segments[i].Stroke = Brushes.White;
                     segments[i].StrokeThickness = 0.5;
                     segments[i].Opacity = 0.4;
@@ -942,12 +1057,15 @@ namespace TUIO_WPF_DEMO
             var segments = innerSegmentList;
             for (int i = 0; i < segments.Count; i++)
             {
-                if (i == index) {
+                if (i == index)
+                {
                     double p = Math.Max(0, Math.Min(1.0, progress));
                     segments[i].Stroke = p >= 1.0 ? Brushes.Lime : Brushes.Gold;
                     segments[i].StrokeThickness = 2 + (6 * p);
                     segments[i].Opacity = 1.0;
-                } else {
+                }
+                else
+                {
                     segments[i].Stroke = Brushes.White;
                     segments[i].StrokeThickness = 1;
                     segments[i].Opacity = 0.4;
@@ -1010,6 +1128,10 @@ namespace TUIO_WPF_DEMO
             else if (_isMenuOpen)
             {
                 CheckMenuSelection((float)x, (float)y);
+            }
+            else if (SignUpPanel.Visibility == Visibility.Visible)
+            {
+                CheckSignUpSelection((float)x, (float)y);
             }
             else if (RecipePanel.Visibility == Visibility.Visible)
             {
@@ -1113,20 +1235,20 @@ namespace TUIO_WPF_DEMO
             _isCooking = false;
             _showRecipeCard = false;
             _hadPositiveEmotion = false; // Reset session emotion
-            
+
             ContextDisplay.Text = "Recipe Interrupted. Choose another.";
             SendToServer("CANCEL");
-            
+
             // Reset all dwelling states completely
             lastHoveredRing = "None";
             lastHoveredSegment = -1;
-            segmentHoverStart = DateTime.MinValue; 
-            
+            segmentHoverStart = DateTime.MinValue;
+
             // Clean bars
             if (StartCookingBar != null) StartCookingBar.Width = 0;
             if (CancelRecipeBar != null) CancelRecipeBar.Width = 0;
             if (StopCookingBar != null) StopCookingBar.Width = 0;
-            
+
             Border[] bars = { Bar1, Bar2, Bar3, Bar4 };
             foreach (var b in bars) if (b != null) b.Width = 0;
         }
@@ -1165,10 +1287,10 @@ namespace TUIO_WPF_DEMO
                         int recipeId = int.Parse(cards[i].Tag.ToString());
                         SendToServer($"RECIPE_ID;{recipeId}");
                         ContextDisplay.Text = "Loading Recipe Details...";
-                        
+
                         // Set state to Cooldown to prevent repeat sends
                         lastHoveredRing = "Cooldown";
-                        segmentHoverStart = DateTime.MaxValue; 
+                        segmentHoverStart = DateTime.MaxValue;
                     }
                     return; // EXIT loop since we found the card
                 }
@@ -1194,7 +1316,8 @@ namespace TUIO_WPF_DEMO
             // 1. Enter Kitchen
             if (IsPointInElement(p, BtnEnterKitchen))
             {
-                if (lastHoveredRing != "Choice" || lastHoveredSegment != 1) {
+                if (lastHoveredRing != "Choice" || lastHoveredSegment != 1)
+                {
                     lastHoveredRing = "Choice";
                     lastHoveredSegment = 1;
                     segmentHoverStart = DateTime.Now;
@@ -1202,7 +1325,8 @@ namespace TUIO_WPF_DEMO
                 }
                 double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
                 EnterKitchenBar.Width = Math.Min(1.0, elapsed / 1.5) * EnterKitchenProgress.ActualWidth;
-                if (elapsed >= 1.5) {
+                if (elapsed >= 1.5)
+                {
                     AdminChoicePanel.Visibility = Visibility.Collapsed;
                     HomePanel.Visibility = Visibility.Visible;
                     ContextDisplay.Text = "Kitchen Hub";
@@ -1211,12 +1335,14 @@ namespace TUIO_WPF_DEMO
                     segmentHoverStart = DateTime.MaxValue;
                 }
                 return;
-            } else { EnterKitchenBar.Width = 0; }
+            }
+            else { EnterKitchenBar.Width = 0; }
 
             // 2. Enter Admin
             if (IsPointInElement(p, BtnEnterAdmin))
             {
-                if (lastHoveredRing != "Choice" || lastHoveredSegment != 2) {
+                if (lastHoveredRing != "Choice" || lastHoveredSegment != 2)
+                {
                     lastHoveredRing = "Choice";
                     lastHoveredSegment = 2;
                     segmentHoverStart = DateTime.Now;
@@ -1224,16 +1350,30 @@ namespace TUIO_WPF_DEMO
                 }
                 double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
                 EnterAdminBar.Width = Math.Min(1.0, elapsed / 1.5) * EnterAdminProgress.ActualWidth;
-                if (elapsed >= 1.5) {
+                if (elapsed >= 1.5)
+                {
                     AdminChoicePanel.Visibility = Visibility.Collapsed;
                     AdminPanel.Visibility = Visibility.Visible;
                     ContextDisplay.Text = "Admin Workspace";
+                    
+                    _editingUserName = "";
+                    TxtNewUserName.Text = "NewUser";
+                    keyboardInputText = "NewUser";
+                    if (keyboardTextBox != null) keyboardTextBox.Text = "NewUser";
+                    
+                    var sp = BtnCapture.Child as StackPanel;
+                    if (sp != null && sp.Children[0] is StackPanel innerSp && innerSp.Children[1] is TextBlock tb)
+                    {
+                        tb.Text = "CAPTURE & SAVE";
+                    }
+
                     SendToServer("LIST_USERS");
                     lastHoveredRing = "Cooldown";
                     segmentHoverStart = DateTime.MaxValue;
                 }
                 return;
-            } else { EnterAdminBar.Width = 0; }
+            }
+            else { EnterAdminBar.Width = 0; }
 
             if (lastHoveredRing == "Choice") lastHoveredRing = "None";
         }
@@ -1248,16 +1388,24 @@ namespace TUIO_WPF_DEMO
             TextBlock txtName = new TextBlock { Text = name, FontSize = 18, VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.FromRgb(44, 62, 80)) };
             Grid.SetColumn(txtName, 0);
 
+            StackPanel actionPanel = new StackPanel { Orientation = Orientation.Horizontal };
+            Grid.SetColumn(actionPanel, 1);
+
+            Border btnEdit = new Border { Background = new SolidColorBrush(Color.FromRgb(41, 128, 185)), CornerRadius = new CornerRadius(5), Padding = new Thickness(10, 5, 10, 5), Margin = new Thickness(0, 0, 8, 0), Tag = name };
+            btnEdit.Child = new TextBlock { Text = "EDIT", Foreground = Brushes.White, FontWeight = FontWeights.Bold, FontSize = 12 };
+            actionPanel.Children.Add(btnEdit);
+
             Border btnDel = new Border { Background = new SolidColorBrush(Color.FromRgb(231, 76, 60)), CornerRadius = new CornerRadius(5), Padding = new Thickness(10, 5, 10, 5), Tag = name };
             btnDel.Child = new TextBlock { Text = "DELETE", Foreground = Brushes.White, FontWeight = FontWeights.Bold, FontSize = 12 };
-            Grid.SetColumn(btnDel, 1);
+            actionPanel.Children.Add(btnDel);
 
             grid.Children.Add(txtName);
-            grid.Children.Add(btnDel);
+            grid.Children.Add(actionPanel);
             row.Child = grid;
 
             AdminUserListPanel.Children.Add(row);
             adminDeleteButtons.Add(btnDel);
+            adminEditButtons.Add(btnEdit);
         }
 
         private void CheckAdminSelection(float normX, float normY)
@@ -1285,10 +1433,17 @@ namespace TUIO_WPF_DEMO
                 {
                     string name = TxtNewUserName.Text.Trim();
                     if (string.IsNullOrEmpty(name)) name = "NewUser";
-                    
-                    SendToServer($"CAPTURE_FACE;{name}");
-                    ContextDisplay.Text = $"Capturing face for {name}...";
-                    
+
+                    if (!string.IsNullOrEmpty(_editingUserName))
+                    {
+                        SendToServer($"EDIT_USER;{_editingUserName};{name}");
+                        ContextDisplay.Text = $"Renaming {_editingUserName} to {name}...";
+                    }
+                    else
+                    {
+                        StartAdminCaptureCountdown(name);
+                    }
+
                     lastHoveredRing = "Cooldown";
                     segmentHoverStart = DateTime.MaxValue;
                     CaptureProgressBar.Width = 0;
@@ -1300,7 +1455,51 @@ namespace TUIO_WPF_DEMO
                 CaptureProgressBar.Width = 0;
             }
 
-            // 2. Check Delete Buttons
+            // 2. Check Edit Buttons
+            for (int i = 0; i < adminEditButtons.Count; i++)
+            {
+                if (IsPointInElement(p, adminEditButtons[i]))
+                {
+                    if (lastHoveredRing != "AdminEditList" || lastHoveredSegment != i)
+                    {
+                        lastHoveredRing = "AdminEditList";
+                        lastHoveredSegment = i;
+                        segmentHoverStart = DateTime.Now;
+                        return;
+                    }
+
+                    double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                    adminEditButtons[i].Background = new SolidColorBrush(Color.FromRgb(30, 96, 139));
+
+                    if (elapsed >= 1.5)
+                    {
+                        string name = adminEditButtons[i].Tag.ToString();
+                        _editingUserName = name;
+                        TxtNewUserName.Text = name;
+                        keyboardInputText = name;
+                        if (keyboardTextBox != null) keyboardTextBox.Text = name;
+
+                        var sp = BtnCapture.Child as StackPanel;
+                        if (sp != null && sp.Children[0] is StackPanel innerSp && innerSp.Children[1] is TextBlock tb)
+                        {
+                            tb.Text = "RENAME USER";
+                        }
+
+                        if (!_isKeyboardOpen) KeyboardPopUp();
+
+                        ContextDisplay.Text = $"Editing user {name}...";
+                        lastHoveredRing = "Cooldown";
+                        segmentHoverStart = DateTime.MaxValue;
+                    }
+                    return;
+                }
+                else
+                {
+                    adminEditButtons[i].Background = new SolidColorBrush(Color.FromRgb(41, 128, 185));
+                }
+            }
+
+            // 3. Check Delete Buttons
             for (int i = 0; i < adminDeleteButtons.Count; i++)
             {
                 if (IsPointInElement(p, adminDeleteButtons[i]))
@@ -1314,7 +1513,6 @@ namespace TUIO_WPF_DEMO
                     }
 
                     double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
-                    // Visual feedback for delete (maybe redder?)
                     adminDeleteButtons[i].Background = new SolidColorBrush(Color.FromRgb(192, 57, 43));
 
                     if (elapsed >= 1.5)
@@ -1329,19 +1527,205 @@ namespace TUIO_WPF_DEMO
                 }
                 else
                 {
-                    // Reset color
                     adminDeleteButtons[i].Background = new SolidColorBrush(Color.FromRgb(231, 76, 60));
                 }
             }
 
-            if (lastHoveredRing == "Admin" || lastHoveredRing == "AdminList") lastHoveredRing = "None";
+            // 4. Check Name Input Textbox (Dwell to open keyboard)
+            if (IsPointInElement(p, TxtNewUserName))
+            {
+                if (lastHoveredRing != "AdminNameInput" || lastHoveredSegment != 0)
+                {
+                    lastHoveredRing = "AdminNameInput";
+                    lastHoveredSegment = 0;
+                    segmentHoverStart = DateTime.Now;
+                    return;
+                }
+
+                double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                double prg = Math.Max(0, Math.Min(1.0, elapsed / 1.5));
+                NameInputProgressBar.Width = prg * NameInputProgress.ActualWidth;
+
+                if (elapsed >= 1.5)
+                {
+                    if (!_isKeyboardOpen)
+                    {
+                        KeyboardPopUp();
+                        TxtNewUserName.Focus();
+                    }
+                    lastHoveredRing = "Cooldown";
+                    segmentHoverStart = DateTime.MaxValue;
+                    NameInputProgressBar.Width = 0;
+                }
+                return;
+            }
+            else
+            {
+                NameInputProgressBar.Width = 0;
+            }
+
+            // 5. Check Exit Admin Button (Dwell to exit)
+            if (IsPointInElement(p, BtnExitAdmin))
+            {
+                if (lastHoveredRing != "AdminExit" || lastHoveredSegment != 0)
+                {
+                    lastHoveredRing = "AdminExit";
+                    lastHoveredSegment = 0;
+                    segmentHoverStart = DateTime.Now;
+                    return;
+                }
+
+                double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                double prg = Math.Max(0, Math.Min(1.0, elapsed / 1.5));
+                ExitAdminProgressBar.Width = prg * ExitAdminProgress.ActualWidth;
+
+                if (elapsed >= 1.5)
+                {
+                    ExitAdminWorkspace();
+                    lastHoveredRing = "Cooldown";
+                    segmentHoverStart = DateTime.MaxValue;
+                    ExitAdminProgressBar.Width = 0;
+                }
+                return;
+            }
+            else
+            {
+                ExitAdminProgressBar.Width = 0;
+            }
+
+            // 6. Check Admin Select Home Cook
+            if (IsPointInElement(p, BtnAdminSelectHomeCook))
+            {
+                if (lastHoveredRing != "AdminSelectHomeCook" || lastHoveredSegment != 0)
+                {
+                    lastHoveredRing = "AdminSelectHomeCook";
+                    lastHoveredSegment = 0;
+                    segmentHoverStart = DateTime.Now;
+                    return;
+                }
+
+                double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                double prg = Math.Max(0, Math.Min(1.0, elapsed / 1.5));
+                AdminSelectHomeCookProgress.Width = prg * AdminSelectHomeCookBar.ActualWidth;
+
+                if (elapsed >= 1.5)
+                {
+                    _adminSelectedProfession = "Home Cook";
+                    
+                    BtnAdminSelectHomeCook.Background = new SolidColorBrush(Color.FromRgb(235, 245, 251)); // Active light blue
+                    BtnAdminSelectHomeCook.BorderBrush = new SolidColorBrush(Color.FromRgb(52, 152, 219)); // Blue border
+                    BtnAdminSelectHomeCook.BorderThickness = new Thickness(3);
+
+                    BtnAdminSelectChef.Background = new SolidColorBrush(Color.FromRgb(249, 249, 249)); // Off-white
+                    BtnAdminSelectChef.BorderBrush = new SolidColorBrush(Color.FromRgb(221, 221, 221)); // Gray border
+                    BtnAdminSelectChef.BorderThickness = new Thickness(2);
+
+                    lastHoveredRing = "Cooldown";
+                    segmentHoverStart = DateTime.MaxValue;
+                    AdminSelectHomeCookProgress.Width = 0;
+                }
+                return;
+            }
+            else
+            {
+                AdminSelectHomeCookProgress.Width = 0;
+            }
+
+            // 7. Check Admin Select Chef
+            if (IsPointInElement(p, BtnAdminSelectChef))
+            {
+                if (lastHoveredRing != "AdminSelectChef" || lastHoveredSegment != 0)
+                {
+                    lastHoveredRing = "AdminSelectChef";
+                    lastHoveredSegment = 0;
+                    segmentHoverStart = DateTime.Now;
+                    return;
+                }
+
+                double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                double prg = Math.Max(0, Math.Min(1.0, elapsed / 1.5));
+                AdminSelectChefProgress.Width = prg * AdminSelectChefBar.ActualWidth;
+
+                if (elapsed >= 1.5)
+                {
+                    _adminSelectedProfession = "Chef";
+                    
+                    BtnAdminSelectChef.Background = new SolidColorBrush(Color.FromRgb(235, 245, 251)); // Active light blue
+                    BtnAdminSelectChef.BorderBrush = new SolidColorBrush(Color.FromRgb(52, 152, 219)); // Blue border
+                    BtnAdminSelectChef.BorderThickness = new Thickness(3);
+
+                    BtnAdminSelectHomeCook.Background = new SolidColorBrush(Color.FromRgb(249, 249, 249)); // Off-white
+                    BtnAdminSelectHomeCook.BorderBrush = new SolidColorBrush(Color.FromRgb(221, 221, 221)); // Gray border
+                    BtnAdminSelectHomeCook.BorderThickness = new Thickness(2);
+
+                    lastHoveredRing = "Cooldown";
+                    segmentHoverStart = DateTime.MaxValue;
+                    AdminSelectChefProgress.Width = 0;
+                }
+                return;
+            }
+            else
+            {
+                AdminSelectChefProgress.Width = 0;
+            }
+
+            if (lastHoveredRing == "Admin" || lastHoveredRing == "AdminList" || lastHoveredRing == "AdminEditList" || lastHoveredRing == "AdminNameInput" || lastHoveredRing == "AdminExit" || lastHoveredRing == "AdminSelectHomeCook" || lastHoveredRing == "AdminSelectChef") lastHoveredRing = "None";
+        }
+
+        private void StopAdminCountdown()
+        {
+            if (_adminCountdownTimer != null)
+            {
+                _adminCountdownTimer.Stop();
+                _adminCountdownTimer = null;
+            }
+            _isAdminCountdownRunning = false;
+
+            if (BtnCapture != null)
+            {
+                BtnCapture.Background = new SolidColorBrush(Color.FromRgb(39, 174, 96)); // back to green
+                var sp = BtnCapture.Child as StackPanel;
+                if (sp != null && sp.Children[0] is StackPanel innerSp && innerSp.Children[1] is TextBlock tb)
+                {
+                    tb.Text = "CAPTURE & SAVE";
+                }
+            }
+        }
+
+        private void ResetAdminProfessionSelect()
+        {
+            _adminSelectedProfession = "Home Cook";
+            if (BtnAdminSelectHomeCook != null && BtnAdminSelectChef != null)
+            {
+                BtnAdminSelectHomeCook.Background = new SolidColorBrush(Color.FromRgb(235, 245, 251)); // Light blue/active
+                BtnAdminSelectHomeCook.BorderBrush = new SolidColorBrush(Color.FromRgb(52, 152, 219)); // Blue
+                BtnAdminSelectHomeCook.BorderThickness = new Thickness(3);
+
+                BtnAdminSelectChef.Background = new SolidColorBrush(Color.FromRgb(249, 249, 249)); // Off-white/inactive
+                BtnAdminSelectChef.BorderBrush = new SolidColorBrush(Color.FromRgb(221, 221, 221)); // Gray
+                BtnAdminSelectChef.BorderThickness = new Thickness(2);
+            }
+        }
+
+        private void ExitAdminWorkspace()
+        {
+            StopAdminCountdown();
+            ResetAdminProfessionSelect();
+            AdminPanel.Visibility = Visibility.Collapsed;
+            AdminChoicePanel.Visibility = Visibility.Visible;
+            ContextDisplay.Text = "Administrator Access";
+            _editingUserName = "";
+            if (_isKeyboardOpen) KeyboardPopUp();
         }
 
         private void BtnExitAdmin_Click(object sender, RoutedEventArgs e)
         {
-            AdminPanel.Visibility = Visibility.Collapsed;
-            AdminChoicePanel.Visibility = Visibility.Visible;
-            ContextDisplay.Text = "Administrator Access";
+            ExitAdminWorkspace();
+        }
+
+        private void BtnExitAdmin_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            ExitAdminWorkspace();
         }
 
         private void OpenLogoutPopup()
@@ -1423,15 +1807,17 @@ namespace TUIO_WPF_DEMO
 
         private bool IsPointInElement(Point p, FrameworkElement el)
         {
-            try {
+            try
+            {
                 // Since MainCanvas and LogoutOverlay are siblings, we must use TransformToVisual 
                 // to map the button's position into the Canvas coordinate space.
                 var transform = el.TransformToVisual(MainCanvas);
                 Point topLeft = transform.Transform(new Point(0, 0));
-                
+
                 return p.X >= topLeft.X && p.X <= topLeft.X + el.ActualWidth &&
                        p.Y >= topLeft.Y && p.Y <= topLeft.Y + el.ActualHeight;
-            } catch { return false; }
+            }
+            catch { return false; }
         }
 
         private void HandlePopupDwell(string button)
@@ -1459,7 +1845,7 @@ namespace TUIO_WPF_DEMO
                 if (button == "Confirm")
                 {
                     SendToServer("LOGOUT");
-                    CloseLogoutPopup(true); 
+                    CloseLogoutPopup(true);
                     ResetUI();
                     ContextDisplay.Text = "Context: Logging out...";
                 }
@@ -1536,7 +1922,8 @@ namespace TUIO_WPF_DEMO
                 if (IsPointInElement(p, stars[i]))
                 {
                     found = true;
-                    if (lastHoveredRing != "Rating" || lastHoveredSegment != i) {
+                    if (lastHoveredRing != "Rating" || lastHoveredSegment != i)
+                    {
                         lastHoveredRing = "Rating";
                         lastHoveredSegment = i;
                         segmentHoverStart = DateTime.Now;
@@ -1546,7 +1933,8 @@ namespace TUIO_WPF_DEMO
                     double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
                     RatingProgressBar.Width = Math.Min(1.0, elapsed / 1.5) * RatingProgress.ActualWidth;
 
-                    if (elapsed >= 1.5) {
+                    if (elapsed >= 1.5)
+                    {
                         int rating = i + 1;
                         SendToServer($"LOG;RATING;{{\"score\":{rating}}}");
                         RatingPanel.Visibility = Visibility.Collapsed;
@@ -1559,7 +1947,8 @@ namespace TUIO_WPF_DEMO
                 }
             }
 
-            if (!found) {
+            if (!found)
+            {
                 RatingProgressBar.Width = 0;
                 if (lastHoveredRing == "Rating") lastHoveredRing = "None";
             }
@@ -1574,7 +1963,8 @@ namespace TUIO_WPF_DEMO
             // YES
             if (IsPointInElement(p, BtnSeeDessert))
             {
-                if (lastHoveredRing != "Dessert" || lastHoveredSegment != 1) {
+                if (lastHoveredRing != "Dessert" || lastHoveredSegment != 1)
+                {
                     lastHoveredRing = "Dessert";
                     lastHoveredSegment = 1;
                     segmentHoverStart = DateTime.Now;
@@ -1582,7 +1972,8 @@ namespace TUIO_WPF_DEMO
                 }
                 double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
                 SeeDessertBar.Width = Math.Min(1.0, elapsed / 1.5) * SeeDessertProgress.ActualWidth;
-                if (elapsed >= 1.5) {
+                if (elapsed >= 1.5)
+                {
                     DessertInquiryPanel.Visibility = Visibility.Collapsed;
                     _showRecipeCard = true; // Trigger recipe display
                     SendToServer("RECIPE_ID;4"); // Suggested Cake
@@ -1590,12 +1981,14 @@ namespace TUIO_WPF_DEMO
                     segmentHoverStart = DateTime.MaxValue;
                 }
                 return;
-            } else { SeeDessertBar.Width = 0; }
+            }
+            else { SeeDessertBar.Width = 0; }
 
             // NO
             if (IsPointInElement(p, BtnNoDessert))
             {
-                if (lastHoveredRing != "Dessert" || lastHoveredSegment != 2) {
+                if (lastHoveredRing != "Dessert" || lastHoveredSegment != 2)
+                {
                     lastHoveredRing = "Dessert";
                     lastHoveredSegment = 2;
                     segmentHoverStart = DateTime.Now;
@@ -1603,19 +1996,23 @@ namespace TUIO_WPF_DEMO
                 }
                 double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
                 NoDessertBar.Width = Math.Min(1.0, elapsed / 1.5) * NoDessertProgress.ActualWidth;
-                if (elapsed >= 1.5) {
+                if (elapsed >= 1.5)
+                {
                     CancelRecipe(); // Back to home
                     lastHoveredRing = "Cooldown";
                     segmentHoverStart = DateTime.MaxValue;
                 }
                 return;
-            } else { NoDessertBar.Width = 0; }
+            }
+            else { NoDessertBar.Width = 0; }
 
             if (lastHoveredRing == "Dessert") lastHoveredRing = "None";
         }
 
         private void ResetUI()
         {
+            StopAdminCountdown();
+            ResetAdminProfessionSelect();
             AdminPanel.Visibility = Visibility.Collapsed;
             AdminChoicePanel.Visibility = Visibility.Collapsed;
             HomePanel.Visibility = Visibility.Collapsed;
@@ -1623,9 +2020,12 @@ namespace TUIO_WPF_DEMO
             StepPanel.Visibility = Visibility.Collapsed;
             LogoutOverlay.Visibility = Visibility.Collapsed;
             TimerDashboard.Visibility = Visibility.Collapsed;
+            SignUpPanel.Visibility = Visibility.Collapsed;
             ContextDisplay.Text = "Please Log In";
             _isCooking = false;
             _isHomeOpen = false;
+            _editingUserName = "";
+            if (_isKeyboardOpen) KeyboardPopUp();
         }
 
         private void BtnLogout_Click(object sender, RoutedEventArgs e)
@@ -1646,7 +2046,7 @@ namespace TUIO_WPF_DEMO
                     keyboardGrid = null;
                 }
                 keyboardKeys.Clear();
-                
+
                 if (lastHoveredRing == "Keyboard")
                 {
                     lastHoveredRing = "None";
@@ -1673,8 +2073,7 @@ namespace TUIO_WPF_DEMO
                 Width = 720,
                 Height = 320,
                 Background = new SolidColorBrush(Color.FromArgb(240, 20, 20, 20)), // Translucent dark gray
-                CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(10)
+                Margin = new Thickness(10)
             };
 
             // Define 5 vertical segments (Row 0: Input View, Rows 1-4: Key grids)
@@ -1693,7 +2092,7 @@ namespace TUIO_WPF_DEMO
             };
             keyboardTextBox = new TextBlock
             {
-                Text = "Gaze to type...",
+                Text = "Hover to type...",
                 Foreground = Brushes.Lime, // Classic terminal Green style
                 FontSize = 20,
                 FontWeight = FontWeights.Bold,
@@ -1717,11 +2116,11 @@ namespace TUIO_WPF_DEMO
             {
                 Grid rowGrid = new Grid();
                 string[] rowKeys = layout[r];
-                
+
                 for (int c = 0; c < rowKeys.Length; c++)
                 {
                     rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                    
+
                     Border keyBorder = new Border
                     {
                         Background = new SolidColorBrush(Color.FromRgb(55, 55, 55)),
@@ -1749,7 +2148,7 @@ namespace TUIO_WPF_DEMO
                     keyBorder.Child = keyText;
                     Grid.SetColumn(keyBorder, c);
                     rowGrid.Children.Add(keyBorder);
-                    
+
                     // Append key border element to list for tracking hit detection
                     keyboardKeys.Add(keyBorder);
                 }
@@ -1807,7 +2206,7 @@ namespace TUIO_WPF_DEMO
             }
 
             // Handle immediate key selection input cooldown block
-            if (segmentHoverStart > DateTime.Now) return; 
+            if (segmentHoverStart > DateTime.Now) return;
 
             double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
             double progress = Math.Max(0, Math.Min(1.0, elapsed / dwellTime));
@@ -1822,8 +2221,8 @@ namespace TUIO_WPF_DEMO
                 HandleKeyboardKeyPress(keyText);
 
                 // Put key on selection lock cooldown for 1.2s so it doesn't infinitely spam the letter
-                segmentHoverStart = DateTime.Now.AddSeconds(1.2); 
-                
+                segmentHoverStart = DateTime.Now.AddSeconds(1.2);
+
                 // Immediate selection color feedback
                 target.BorderBrush = Brushes.Lime;
                 target.BorderThickness = new Thickness(4);
@@ -1838,6 +2237,308 @@ namespace TUIO_WPF_DEMO
                 key.BorderThickness = new Thickness(1);
             }
         }
+
+        private void HandleKeyboardKeyPress(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return;
+
+            if (key == "BACK")
+            {
+                if (keyboardInputText.Length > 0)
+                {
+                    keyboardInputText = keyboardInputText.Substring(0, keyboardInputText.Length - 1);
+                }
+            }
+            else if (key == "CLEAR")
+            {
+                keyboardInputText = "";
+            }
+            else if (key == "SPACE")
+            {
+                keyboardInputText += " ";
+            }
+            else if (key == "DONE")
+            {
+                if (SignUpPanel.Visibility == Visibility.Visible && _signUpPhase == 1)
+                {
+                    _signUpName = keyboardInputText.Trim();
+                    if (!string.IsNullOrWhiteSpace(_signUpName))
+                    {
+                        TransitionToSignUpPhase(2);
+                    }
+                    else
+                    {
+                        ContextDisplay.Text = "Please write a name first!";
+                    }
+                }
+                else if (AdminPanel.Visibility == Visibility.Visible)
+                {
+                    string txtName = keyboardInputText.Trim();
+                    if (!string.IsNullOrWhiteSpace(txtName))
+                    {
+                        if (!string.IsNullOrEmpty(_editingUserName))
+                        {
+                            SendToServer($"EDIT_USER;{_editingUserName};{txtName}");
+                            ContextDisplay.Text = $"Renaming {_editingUserName} to {txtName}...";
+                        }
+                        else
+                        {
+                            TxtNewUserName.Text = txtName;
+                        }
+                    }
+                    KeyboardPopUp(); // Close the keyboard
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(keyboardInputText) && keyboardTextBox != null)
+                    {
+                        keyboardTextBox.Text = keyboardInputText.Trim();
+                    }
+                    KeyboardPopUp(); // Close the keyboard
+                }
+                return;
+            }
+            else
+            {
+                keyboardInputText += key;
+            }
+
+            if (keyboardTextBox != null)
+            {
+                keyboardTextBox.Text = keyboardInputText;
+            }
+
+            if (SignUpPanel.Visibility == Visibility.Visible && _signUpPhase == 1)
+            {
+                TxtSignUpName.Text = keyboardInputText;
+            }
+
+            if (AdminPanel.Visibility == Visibility.Visible)
+            {
+                TxtNewUserName.Text = keyboardInputText;
+            }
+        }
+
+        #region Sign-Up Workflow
+        private void TransitionToSignUpPhase(int phase)
+        {
+            _signUpPhase = phase;
+            if (phase == 1)
+            {
+                SignUpHeaderSubtitle.Text = "Step 1: Tell us your name";
+                SignUpPhase1Panel.Visibility = Visibility.Visible;
+                SignUpPhase2Panel.Visibility = Visibility.Collapsed;
+                SignUpPhase3Panel.Visibility = Visibility.Collapsed;
+
+                // Simultaneously pop up keyboard for Step 1 writing name!
+                if (!_isKeyboardOpen) KeyboardPopUp();
+            }
+            else if (phase == 2)
+            {
+                SignUpHeaderSubtitle.Text = "Step 2: What is your cooking skill?";
+                SignUpPhase1Panel.Visibility = Visibility.Collapsed;
+                SignUpPhase2Panel.Visibility = Visibility.Visible;
+                SignUpPhase3Panel.Visibility = Visibility.Collapsed;
+
+                // Close keyboard for Step 2 selection!
+                if (_isKeyboardOpen) KeyboardPopUp();
+            }
+            else if (phase == 3)
+            {
+                SignUpHeaderSubtitle.Text = "Step 3: Stand by for profile picture";
+                SignUpPhase1Panel.Visibility = Visibility.Collapsed;
+                SignUpPhase2Panel.Visibility = Visibility.Collapsed;
+                SignUpPhase3Panel.Visibility = Visibility.Visible;
+
+                StartSignUpCountdown();
+            }
+        }
+
+        private void StartSignUpCountdown()
+        {
+            _signUpCountdownRemaining = 3;
+            SignUpCountdownTimer.Text = "3";
+
+            _signUpCountdownTimer = new System.Windows.Threading.DispatcherTimer();
+            _signUpCountdownTimer.Interval = TimeSpan.FromSeconds(1);
+            _signUpCountdownTimer.Tick += (s, e) => {
+                _signUpCountdownRemaining--;
+                if (_signUpCountdownRemaining > 0)
+                {
+                    SignUpCountdownTimer.Text = _signUpCountdownRemaining.ToString();
+                    try { System.Media.SystemSounds.Beep.Play(); } catch { }
+                }
+                else
+                {
+                    _signUpCountdownTimer.Stop();
+                    SignUpCountdownTimer.Text = "📸";
+                    try { System.Media.SystemSounds.Hand.Play(); } catch { }
+
+                    // Close keyboard if open
+                    if (_isKeyboardOpen) KeyboardPopUp();
+
+                    // Trigger face capture & DB user creation on the Python server
+                    SendToServer($"REGISTER_USER;{_signUpName};{_signUpProfession}");
+                    ContextDisplay.Text = "Capturing profile photo...";
+                }
+            };
+            _signUpCountdownTimer.Start();
+            try { System.Media.SystemSounds.Beep.Play(); } catch { }
+        }
+
+        private void StartAdminCaptureCountdown(string name)
+        {
+            if (_isAdminCountdownRunning) return;
+            _isAdminCountdownRunning = true;
+            _adminCountdownRemaining = 3;
+
+            if (_adminCountdownTimer != null) _adminCountdownTimer.Stop();
+
+            BtnCapture.Background = new SolidColorBrush(Color.FromRgb(243, 156, 18)); // Amber/Orange warning background
+
+            var sp = BtnCapture.Child as StackPanel;
+            if (sp != null && sp.Children[0] is StackPanel innerSp && innerSp.Children[1] is TextBlock tb)
+            {
+                tb.Text = "CAPTURING IN 3s...";
+            }
+
+            _adminCountdownTimer = new System.Windows.Threading.DispatcherTimer();
+            _adminCountdownTimer.Interval = TimeSpan.FromSeconds(1);
+            _adminCountdownTimer.Tick += (s, e) => {
+                _adminCountdownRemaining--;
+                if (_adminCountdownRemaining > 0)
+                {
+                    var spInner = BtnCapture.Child as StackPanel;
+                    if (spInner != null && spInner.Children[0] is StackPanel innerSpInner && innerSpInner.Children[1] is TextBlock tbInner)
+                    {
+                        tbInner.Text = $"CAPTURING IN {_adminCountdownRemaining}s...";
+                    }
+                    try { System.Media.SystemSounds.Beep.Play(); } catch { }
+                }
+                else
+                {
+                    _adminCountdownTimer.Stop();
+                    _isAdminCountdownRunning = false;
+
+                    var spInner = BtnCapture.Child as StackPanel;
+                    if (spInner != null && spInner.Children[0] is StackPanel innerSpInner && innerSpInner.Children[1] is TextBlock tbInner)
+                    {
+                        tbInner.Text = "📸 CAPTURING...";
+                    }
+                    BtnCapture.Background = new SolidColorBrush(Color.FromRgb(39, 174, 96)); // Green background
+                    try { System.Media.SystemSounds.Hand.Play(); } catch { }
+
+                    SendToServer($"REGISTER_USER;{name};{_adminSelectedProfession}");
+                    ContextDisplay.Text = $"Registering face for {name} ({_adminSelectedProfession})...";
+                }
+            };
+            _adminCountdownTimer.Start();
+            try { System.Media.SystemSounds.Beep.Play(); } catch { }
+        }
+
+        private void CheckSignUpSelection(double normX, double normY)
+        {
+            double canvasW = MainCanvas.ActualWidth > 0 ? MainCanvas.ActualWidth : this.Width;
+            double canvasH = MainCanvas.ActualHeight > 0 ? MainCanvas.ActualHeight : this.Height;
+            Point p = new Point(normX * canvasW, normY * canvasH);
+
+            if (_signUpPhase == 1)
+            {
+                if (IsPointInElement(p, BtnSignUpNext1))
+                {
+                    if (lastHoveredRing != "SignUp" || lastHoveredSegment != 1)
+                    {
+                        lastHoveredRing = "SignUp";
+                        lastHoveredSegment = 1;
+                        segmentHoverStart = DateTime.Now;
+                        return;
+                    }
+                    double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                    SignUpNext1Bar.Width = Math.Min(1.0, elapsed / 1.5) * SignUpNext1Progress.ActualWidth;
+                    if (elapsed >= 1.5)
+                    {
+                        _signUpName = TxtSignUpName.Text.Trim();
+                        if (!string.IsNullOrWhiteSpace(_signUpName))
+                        {
+                            TransitionToSignUpPhase(2);
+                        }
+                        else
+                        {
+                            ContextDisplay.Text = "Please write a name first!";
+                        }
+                        lastHoveredRing = "Cooldown";
+                        segmentHoverStart = DateTime.MaxValue;
+                    }
+                }
+                else
+                {
+                    SignUpNext1Bar.Width = 0;
+                    if (lastHoveredRing == "SignUp") lastHoveredRing = "None";
+                }
+            }
+            else if (_signUpPhase == 2)
+            {
+                bool found = false;
+
+                // Home Cook card
+                if (IsPointInElement(p, BtnSelectHomeCook))
+                {
+                    found = true;
+                    if (lastHoveredRing != "SignUp" || lastHoveredSegment != 2)
+                    {
+                        lastHoveredRing = "SignUp";
+                        lastHoveredSegment = 2;
+                        segmentHoverStart = DateTime.Now;
+                        return;
+                    }
+                    double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                    SelectHomeCookBar.Width = Math.Min(1.0, elapsed / 1.5) * SelectHomeCookProgress.ActualWidth;
+                    if (elapsed >= 1.5)
+                    {
+                        _signUpProfession = "Home Cook";
+                        TransitionToSignUpPhase(3);
+                        lastHoveredRing = "Cooldown";
+                        segmentHoverStart = DateTime.MaxValue;
+                    }
+                }
+                else
+                {
+                    SelectHomeCookBar.Width = 0;
+                }
+
+                // Chef card
+                if (IsPointInElement(p, BtnSelectChef))
+                {
+                    found = true;
+                    if (lastHoveredRing != "SignUp" || lastHoveredSegment != 3)
+                    {
+                        lastHoveredRing = "SignUp";
+                        lastHoveredSegment = 3;
+                        segmentHoverStart = DateTime.Now;
+                        return;
+                    }
+                    double elapsed = (DateTime.Now - segmentHoverStart).TotalSeconds;
+                    SelectChefBar.Width = Math.Min(1.0, elapsed / 1.5) * SelectChefProgress.ActualWidth;
+                    if (elapsed >= 1.5)
+                    {
+                        _signUpProfession = "Chef";
+                        TransitionToSignUpPhase(3);
+                        lastHoveredRing = "Cooldown";
+                        segmentHoverStart = DateTime.MaxValue;
+                    }
+                }
+                else
+                {
+                    SelectChefBar.Width = 0;
+                }
+
+                if (!found && lastHoveredRing == "SignUp")
+                {
+                    lastHoveredRing = "None";
+                }
+            }
+        }
+        #endregion
 
         #endregion
     }

@@ -20,6 +20,7 @@ Protocol (all messages newline-terminated UTF-8):
 import json
 from db import get_recipe, start_session, log_interaction, save_evaluation
 from conn import receive_messages
+from cooking.step_adapter import adapt_steps
 
 
 # ─────────────────────────────────────────────
@@ -71,7 +72,12 @@ def send_recipe(conn, parts, vision, user_id=None):
     session_id = vision.start_new_session(recipe_id=recipe_id, 
                                           scenario=recipe.get("scenario"))
 
-    _send_steps(conn, recipe["steps_json"], session_id, vision)
+    # ── Adapt steps based on the logged-in user's skill level
+    skill = getattr(vision, 'current_user_skill', None) or 'Chef'
+    adapted_steps = adapt_steps(recipe["steps_json"], recipe_id, skill)
+    print(f"[CookingSession] Delivering {len(adapted_steps)} steps for skill='{skill}' (recipe {recipe_id})")
+
+    _send_steps(conn, adapted_steps, session_id, vision)
 
 
 def _send_steps(conn, steps, session_id, vision):

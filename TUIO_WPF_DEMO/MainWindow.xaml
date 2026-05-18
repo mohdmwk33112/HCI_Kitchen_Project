@@ -216,7 +216,17 @@
                     <TextBlock x:Name="StepNumberText" Text="STEP 1 OF 5" Foreground="#0366D6" FontSize="14" FontWeight="Black"/>
                 </Border>
                 
-                <TextBlock x:Name="StepInstructionText" Text="Instruction goes here..." Foreground="#2C3E50" FontSize="36" FontWeight="SemiBold" TextWrapping="Wrap" TextAlignment="Center" Margin="0,0,0,40" LineHeight="48"/>
+                <TextBlock x:Name="StepInstructionText" Text="Instruction goes here..." Foreground="#2C3E50" FontSize="36" FontWeight="SemiBold" TextWrapping="Wrap" TextAlignment="Center" Margin="0,0,0,20" LineHeight="48"/>
+
+                <!-- Home Cook Mode Badge (only visible for Home Cook users) -->
+                <Border x:Name="HomeCookBadge" Visibility="Collapsed" Background="#FFF3CD" BorderBrush="#F39C12" BorderThickness="2"
+                        CornerRadius="8" Padding="10,6" Margin="0,0,0,30" HorizontalAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🍳" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="HOME COOK MODE — Read every word carefully. No rush!" 
+                                   Foreground="#856404" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
                 
                 <Grid>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Opacity="0.4">
@@ -318,13 +328,38 @@
                 
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,40">
                     <TextBlock Text="NAME:" VerticalAlignment="Center" Margin="0,0,15,0" FontWeight="Bold" Foreground="#2C3E50"/>
-                    <TextBox x:Name="TxtNewUserName" Text="NewUser" FontSize="24" Padding="15,10" Width="300" BorderBrush="#DDD" BorderThickness="2">
-                        <TextBox.Resources>
-                            <Style TargetType="{x:Type Border}">
-                                <Setter Property="CornerRadius" Value="10"/>
-                            </Style>
-                        </TextBox.Resources>
-                    </TextBox>
+                    <StackPanel>
+                        <TextBox x:Name="TxtNewUserName" Text="NewUser" FontSize="24" Padding="15,10" Width="300" BorderBrush="#DDD" BorderThickness="2">
+                            <TextBox.Resources>
+                                <Style TargetType="{x:Type Border}">
+                                    <Setter Property="CornerRadius" Value="10"/>
+                                </Style>
+                            </TextBox.Resources>
+                        </TextBox>
+                        <Border x:Name="NameInputProgress" Height="6" Background="#11000000" Margin="0,5,0,0" CornerRadius="3" Width="300">
+                            <Border x:Name="NameInputProgressBar" Width="0" Background="#3498DB" HorizontalAlignment="Left" CornerRadius="3"/>
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,30">
+                    <TextBlock Text="PROFESSION:" VerticalAlignment="Center" Margin="0,0,15,0" FontWeight="Bold" Foreground="#2C3E50"/>
+                    <Border x:Name="BtnAdminSelectHomeCook" Background="#EBF5FB" CornerRadius="10" Padding="15,10" Margin="5" Width="150" BorderBrush="#3498DB" BorderThickness="3">
+                        <StackPanel>
+                            <TextBlock Text="🍳 HOME COOK" Foreground="#2C3E50" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <Border x:Name="AdminSelectHomeCookBar" Height="4" Background="#11000000" Margin="0,8,0,0" CornerRadius="2">
+                                <Border x:Name="AdminSelectHomeCookProgress" Width="0" Background="#3498DB" HorizontalAlignment="Left" CornerRadius="2"/>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                    <Border x:Name="BtnAdminSelectChef" Background="#F9F9F9" CornerRadius="10" Padding="15,10" Margin="5" Width="150" BorderBrush="#DDD" BorderThickness="2">
+                        <StackPanel>
+                            <TextBlock Text="👨‍🍳 CHEF" Foreground="#2C3E50" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <Border x:Name="AdminSelectChefBar" Height="4" Background="#11000000" Margin="0,8,0,0" CornerRadius="2">
+                                <Border x:Name="AdminSelectChefProgress" Width="0" Background="#3498DB" HorizontalAlignment="Left" CornerRadius="2"/>
+                            </Border>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
@@ -351,14 +386,82 @@
                     </ScrollViewer>
                 </Border>
 
-                <Button x:Name="BtnExitAdmin" Content="EXIT ADMIN MODE" Click="BtnExitAdmin_Click" 
-                        Margin="0,30,0,0" Background="#95A5A6" Foreground="White" Padding="20,10" FontWeight="Bold" BorderThickness="0">
-                    <Button.Resources>
-                        <Style TargetType="Border">
-                            <Setter Property="CornerRadius" Value="8"/>
-                        </Style>
-                    </Button.Resources>
-                </Button>
+                <Border x:Name="BtnExitAdmin" Background="#95A5A6" CornerRadius="12" Padding="25,20" Margin="0,30,0,0" Width="300" HorizontalAlignment="Center" PreviewMouseLeftButtonDown="BtnExitAdmin_MouseDown">
+                    <StackPanel>
+                        <TextBlock Text="EXIT ADMIN MODE" Foreground="White" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center"/>
+                        <Border x:Name="ExitAdminProgress" Height="6" Background="#33000000" Margin="0,10,0,0" CornerRadius="3">
+                            <Border x:Name="ExitAdminProgressBar" Width="0" Background="White" HorizontalAlignment="Left" CornerRadius="3"/>
+                        </Border>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Border>
+
+        <!-- Sign Up Panel -->
+        <Border x:Name="SignUpPanel" Visibility="Collapsed" Style="{StaticResource KitchenPanel}" MaxWidth="800" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <StackPanel>
+                <!-- Header -->
+                <TextBlock x:Name="SignUpHeaderTitle" Text="CREATE YOUR KITCHEN PROFILE" Foreground="#2C3E50" FontSize="32" FontWeight="ExtraBold" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                <TextBlock x:Name="SignUpHeaderSubtitle" Text="Step 1: Tell us your name" Foreground="#7F8C8D" FontSize="16" HorizontalAlignment="Center" Margin="0,0,0,30"/>
+
+                <!-- PHASE 1: WRITE NAME -->
+                <StackPanel x:Name="SignUpPhase1Panel" Visibility="Visible">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,30">
+                        <TextBlock Text="NAME:" VerticalAlignment="Center" Margin="0,0,15,0" FontWeight="Bold" Foreground="#2C3E50" FontSize="20"/>
+                        <TextBox x:Name="TxtSignUpName" Text="" FontSize="24" Padding="15,10" Width="300" IsReadOnly="True" BorderBrush="#DDD" BorderThickness="2">
+                            <TextBox.Resources>
+                                <Style TargetType="{x:Type Border}">
+                                    <Setter Property="CornerRadius" Value="10"/>
+                                </Style>
+                            </TextBox.Resources>
+                        </TextBox>
+                    </StackPanel>
+
+                    <!-- Hover and Select Button to Next Phase -->
+                    <Border x:Name="BtnSignUpNext1" Background="#27AE60" CornerRadius="12" Padding="20,15" HorizontalAlignment="Center" Width="200">
+                        <StackPanel>
+                            <TextBlock Text="NEXT ➡️" Foreground="White" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <Border x:Name="SignUpNext1Progress" Height="4" Background="#33000000" Margin="0,10,0,0" CornerRadius="2">
+                                <Border x:Name="SignUpNext1Bar" Width="0" Background="White" HorizontalAlignment="Left"/>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- PHASE 2: SELECT PROFESSION -->
+                <StackPanel x:Name="SignUpPhase2Panel" Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,30">
+                        <!-- Home Cook Card -->
+                        <Border x:Name="BtnSelectHomeCook" Style="{StaticResource KitchenPanel}" Width="250" Height="220" Margin="15" BorderBrush="#E0E0E0">
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="🏠" FontSize="50" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                                <TextBlock Text="HOME COOK" FontSize="20" FontWeight="Bold" Foreground="#2C3E50" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Simple, healthy meals" FontSize="12" Foreground="#95A5A6" HorizontalAlignment="Center" Margin="0,5,0,15"/>
+                                <Border x:Name="SelectHomeCookProgress" Height="4" Background="#ECF0F1" Margin="10,0">
+                                    <Border x:Name="SelectHomeCookBar" Width="0" Background="#2980B9" HorizontalAlignment="Left"/>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Chef Card -->
+                        <Border x:Name="BtnSelectChef" Style="{StaticResource KitchenPanel}" Width="250" Height="220" Margin="15" BorderBrush="#E0E0E0">
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="👨‍🍳" FontSize="50" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                                <TextBlock Text="CHEF" FontSize="20" FontWeight="Bold" Foreground="#2C3E50" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Master the culinary arts" FontSize="12" Foreground="#95A5A6" HorizontalAlignment="Center" Margin="0,5,0,15"/>
+                                <Border x:Name="SelectChefProgress" Height="4" Background="#ECF0F1" Margin="10,0">
+                                    <Border x:Name="SelectChefBar" Width="0" Background="#D35400" HorizontalAlignment="Left"/>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- PHASE 3: PHOTO COUNTDOWN -->
+                <StackPanel x:Name="SignUpPhase3Panel" Visibility="Collapsed" HorizontalAlignment="Center">
+                    <TextBlock x:Name="SignUpCountdownText" Text="Get ready! Face the camera..." Foreground="#E74C3C" FontSize="28" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,20"/>
+                    <TextBlock x:Name="SignUpCountdownTimer" Text="3" Foreground="#2C3E50" FontSize="72" FontWeight="Black" HorizontalAlignment="Center" Margin="0,0,0,20"/>
+                </StackPanel>
             </StackPanel>
         </Border>
 

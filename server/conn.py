@@ -2,7 +2,7 @@ import socket
 import threading
 
 HOST = "0.0.0.0"
-PORT = 65434
+PORT = 65450
 
 def receive_messages(conn):
     if not hasattr(receive_messages, "buffer"):

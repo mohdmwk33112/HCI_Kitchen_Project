@@ -6,9 +6,12 @@ from threading import Thread
 from face.face_handler import FaceHandler
 from face.emotion_handler import EmotionHandler
 from gestures.hand_gestures import GestureHandler
+from yolo_gestures import YoloGestureHandler
 from core.ingredient_detector import IngredientDetector
 from face.gaze_handler import GazeHandler
 import db
+import threading
+from heat_map import generate_heatmap
 
 
 class VisionManager:
@@ -16,8 +19,9 @@ class VisionManager:
         self.conn = conn
         self.face_handler = FaceHandler(people_dir)
         self.gesture_handler = GestureHandler()
+        self.yolo_gesture_handler = YoloGestureHandler()
         self.emotion_handler = EmotionHandler(analysis_interval=15.0)
-        self.ingredient_detector = IngredientDetector("yolo11n.pt")
+        self.ingredient_detector = IngredientDetector("best.pt")
         self.gaze_handler = GazeHandler("face_landmarker.task")
 
 
@@ -29,6 +33,7 @@ class VisionManager:
         self.last_name = None
         self.current_user = None
         self.current_user_id = None
+        self.current_user_skill = None   # "Chef", "Home Cook", etc.
         self.current_session_id = None
         
         # Performance tuning
@@ -42,6 +47,8 @@ class VisionManager:
         # Registration state
         self.capture_pending = False
         self.capture_name = None
+        self.capture_profession = None
+        self.last_face_detected_time = None
 
 
     def start(self):
@@ -66,6 +73,10 @@ class VisionManager:
                     # Save heatmap data to CSV
                     log_path = self.gaze_handler.save_log(self.current_user)
                     
+                    # Generate heatmap in a background thread
+                    if log_path:
+                        threading.Thread(target=generate_heatmap, args=(log_path,), daemon=True).start()
+                    
                     # DB LOGGING: Log gaze result if in session
                     if self.current_session_id:
                         db.log_interaction(self.current_session_id, "gaze_summary", {
@@ -81,6 +92,7 @@ class VisionManager:
             self.confirmation_counts = {}
             self.last_name = None
             self.gaze_handler.reset_history()
+            self.last_face_detected_time = None
         
         return final_side
 
@@ -121,14 +133,30 @@ class VisionManager:
                 if self.capture_pending and self.capture_name:
                     success = self.face_handler.register_new_face(frame, self.capture_name)
                     if success:
-                        self.conn.sendall(f"capture_success;{self.capture_name}\n".encode("utf-8"))
+                        if self.capture_profession:
+                            import db
+                            db.create_user(name=self.capture_name, skill_level=self.capture_profession)
+                            if self.state == "SIGNUP":
+                                self.current_user = self.capture_name
+                                user_data = db.get_user_by_name(self.capture_name)
+                                if user_data:
+                                    self.current_user_id = user_data['user_id']
+                                self.conn.sendall(f"signup_success;{self.capture_name}\n".encode("utf-8"))
+                                self.set_state("GESTURES")
+                            else:
+                                self.conn.sendall(f"capture_success;{self.capture_name}\n".encode("utf-8"))
+                        else:
+                            self.conn.sendall(f"capture_success;{self.capture_name}\n".encode("utf-8"))
                     else:
                         self.conn.sendall("error;capture_failed\n".encode("utf-8"))
                     self.capture_pending = False
                     self.capture_name = None
+                    self.capture_profession = None
 
                 if self.state == "LOGIN":
                     self._process_login(small_frame)
+                elif self.state == "SIGNUP":
+                    self._process_gestures(small_frame, timestamp_ms)
                 elif self.state == "GESTURES":
                     self._process_gestures(small_frame, timestamp_ms)
                 elif self.state == "CIRCULAR_MENU":
@@ -156,6 +184,7 @@ class VisionManager:
                 current_name = None
 
         if current_name:
+            self.last_face_detected_time = time.time()
             label = f"{current_name} ({current_confidence:.1f}%)"
             color = (0, 255, 0)
             
@@ -171,15 +200,17 @@ class VisionManager:
                 print(f"Login confirmed: {current_name} at {current_confidence:.1f}%")
                 self.current_user = current_name
                 
-                # Fetch preferred side from DB
+                # Fetch preferred side and skill level from DB
                 user_data = db.get_user_by_name(current_name)
                 if user_data:
                     self.current_user_id = user_data['user_id']
                     pref_side = user_data.get('preferred_side', 'Left')
+                    self.current_user_skill = user_data.get('skill_level') or 'Chef'
                 else:
                     pref_side = 'Left'
+                    self.current_user_skill = 'Chef'
                 
-                self.conn.sendall(f"login_success;{current_name};{pref_side}\n".encode("utf-8"))
+                self.conn.sendall(f"login_success;{current_name};{pref_side};{self.current_user_skill}\n".encode("utf-8"))
                 self.set_state("GESTURES")
         else:
             label = "Scanning for faces..."
@@ -187,12 +218,41 @@ class VisionManager:
             self.last_name = None
             self.confirmation_counts = {}
 
+            # Face undetected timeout check (10.0 seconds)
+            if self.last_face_detected_time is None:
+                self.last_face_detected_time = time.time()
+            
+            elapsed = time.time() - self.last_face_detected_time
+            countdown = max(0.0, 10.0 - elapsed)
+            if countdown > 0:
+                cv2.putText(frame, f"Sign-up in {countdown:.1f}s (No Face)", (30, 80), cv2.FONT_HERSHEY_DUPLEX, 0.75, (0, 165, 255), 2)
+            
+            if elapsed >= 10.0:
+                print("[VisionManager] No face detected for 10 seconds. Triggering Sign Up!")
+                self.conn.sendall("trigger_signup\n".encode("utf-8"))
+                self.set_state("SIGNUP")
+                self.last_face_detected_time = time.time()
+
         cv2.putText(frame, label, (30, 40), cv2.FONT_HERSHEY_DUPLEX, 1.0, color, 2)
         cv2.imshow("Kitchen Assistant - Vision", frame)
 
     def _process_gestures(self, frame, timestamp_ms, suppress_gestures=False):
-        # Pass frame to gesture handler
-        gesture_payload, pointer_data = self.gesture_handler.process_frame(frame, timestamp_ms)
+        # 1. Run YOLO + HSV Red Laser detector first
+        detections = self.ingredient_detector.detect(frame)
+        laser_active = any(d["label"] == "red laser" for d in detections) if detections else False
+
+        # 2. Conditionally run MediaPipe hand gesture handler (Bypassed in Laser Dominant mode)
+        hand_gesture_payload = None
+        hand_pointer_data = None
+        if not laser_active:
+            hand_gesture_payload, hand_pointer_data = self.gesture_handler.process_frame(frame, timestamp_ms)
+
+        # 3. Run YOLO / Laser object tracking gesture handler (always runs to capture laser)
+        yolo_gesture_payload, yolo_pointer_data = self.yolo_gesture_handler.process_detections(detections, timestamp_ms)
+
+        # 4. Resolve pointer data and gestures
+        pointer_data = yolo_pointer_data if laser_active else (hand_pointer_data if hand_pointer_data is not None else yolo_pointer_data)
+        gesture_payload = yolo_gesture_payload if laser_active else (hand_gesture_payload if hand_gesture_payload is not None else yolo_gesture_payload)
 
         # Track Gaze
         gaze_h, gaze_v = self.gaze_handler.process_frame(frame, timestamp_ms)
@@ -214,17 +274,25 @@ class VisionManager:
         cv2.putText(frame, f"User: {self.current_user}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
         cv2.putText(frame, f"Emotion: {emotion}", (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 100, 0), 2)
         
-        if suppress_gestures:
-            cv2.putText(frame, "[ MENU OPEN - Gestures Paused ]", (10, 86), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 200, 255), 2)
+        if laser_active:
+            cv2.putText(frame, "● LASER DOMINANT MODE", (10, 86), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2)
         else:
-            cv2.putText(frame, "Gestures Active", (10, 86), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+            if suppress_gestures:
+                cv2.putText(frame, "[ MENU OPEN - Gestures Paused ]", (10, 86), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 200, 255), 2)
+            else:
+                cv2.putText(frame, "Concurrent Gestures Active", (10, 86), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
         
         # Gaze Debug HUD
         most_frequent = self.gaze_handler.get_most_frequent_side()
         h_ratio = np.mean(self.gaze_handler.h_buffer) if self.gaze_handler.h_buffer else 0.5
         cv2.putText(frame, f"Gaze: {most_frequent} (Ratio: {h_ratio:.2f})", (10, 114), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 0), 2)
         
-        # 1. Send Pointer Data (Index finger tracking) - Send every frame if available
+        # YOLO Gesture state HUD
+        tracking_status = "● YOLO RECORDING" if self.yolo_gesture_handler.is_tracking else "YOLO Gesture: Waiting..."
+        tracking_color = (0, 255, 0) if self.yolo_gesture_handler.is_tracking else (160, 160, 160)
+        cv2.putText(frame, tracking_status, (10, 142), cv2.FONT_HERSHEY_SIMPLEX, 0.65, tracking_color, 2)
+
+        # 1. Send Pointer Data (Index finger or YOLO object tracking) - Send every frame if available
         if pointer_data:
             try:
                 pointer_payload = json.dumps({"type": "pointer", "x": pointer_data["x"], "y": pointer_data["y"]})
@@ -258,29 +326,30 @@ class VisionManager:
 
         # 4. Detect Ingredients (Every N frames to save CPU and improve stability)
         self.detection_frame_count += 1
-        if self.detection_frame_count % self.detection_interval == 0:
-            detections = self.ingredient_detector.detect(frame)
-            # Only send if we actually have something (or send empty to clear client)
-            try:
-                detection_payload = json.dumps({"type": "detections", "ingredients": detections})
-                self.conn.sendall((detection_payload + "\n").encode("utf-8"))
-                
-                # DB LOGGING: Log detections if in session
-                if self.current_session_id and detections:
-                    db.log_interaction(self.current_session_id, "ingredients_detected", {"list": detections})
-                
-                # Draw bounding boxes on server HUD for debugging
-                for det in detections:
-                    h, w = frame.shape[:2]
-                    x1 = int(det["x"] * w)
-                    y1 = int(det["y"] * h)
-                    bw = int(det["w"] * w)
-                    bh = int(det["h"] * h)
-                    cv2.rectangle(frame, (x1, y1), (x1 + bw, y1 + bh), (0, 255, 0), 2)
-                    cv2.putText(frame, f"{det['label']} {det['confidence']}", (x1, y1 - 10), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-            except Exception as e:
-                print(f"Failed to send detections: {e}")
+        
+        # Send detections to client on interval
+        if detections is not None:
+            if self.detection_frame_count % self.detection_interval == 0:
+                try:
+                    detection_payload = json.dumps({"type": "detections", "ingredients": detections})
+                    self.conn.sendall((detection_payload + "\n").encode("utf-8"))
+                    
+                    # DB LOGGING: Log detections if in session
+                    if self.current_session_id and detections:
+                        db.log_interaction(self.current_session_id, "ingredients_detected", {"list": detections})
+                except Exception as e:
+                    print(f"Failed to send detections: {e}")
+
+            # Draw bounding boxes on server HUD for debugging (drawn every frame when detections are active)
+            for det in detections:
+                h, w = frame.shape[:2]
+                x1 = int(det["x"] * w)
+                y1 = int(det["y"] * h)
+                bw = int(det["w"] * w)
+                bh = int(det["h"] * h)
+                cv2.rectangle(frame, (x1, y1), (x1 + bw, y1 + bh), (0, 255, 0), 2)
+                cv2.putText(frame, f"{det['label']} {det['confidence']}", (x1, y1 - 10), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
         cv2.imshow("Kitchen Assistant - Vision", frame)
 
