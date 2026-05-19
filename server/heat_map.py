@@ -12,7 +12,10 @@ from scipy.ndimage import gaussian_filter
 SCREEN_WIDTH  = 1920  # must match what you set in the tracker
 SCREEN_HEIGHT = 1080
 
-def generate_heatmap(csv_file, show=False):
+# Dedicated folder for all heatmap images
+HEATMAP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Heatmaps")
+
+def generate_heatmap(csv_file, output_dir=None, show=False):
     if not os.path.exists(csv_file):
         print(f"Error: {csv_file} does not exist.")
         return None
@@ -41,7 +44,12 @@ def generate_heatmap(csv_file, show=False):
     plt.colorbar(ax.images[0], ax=ax, label="Gaze density")
     plt.tight_layout()
 
-    output = csv_file.replace(".csv", "_heatmap.png")
+    # Resolve output directory (defaults to dedicated Heatmaps folder)
+    dest_dir = output_dir if output_dir else HEATMAP_DIR
+    os.makedirs(dest_dir, exist_ok=True)
+
+    base_name = os.path.splitext(os.path.basename(csv_file))[0]
+    output = os.path.join(dest_dir, f"{base_name}_heatmap.png")
     plt.savefig(output, dpi=150)
     print(f"Heatmap saved to {output}")
     
