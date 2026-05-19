@@ -55,7 +55,7 @@ def generate_heatmap(csv_file, output_dir=None, show=False):
     plt.savefig(output, dpi=150)
     print(f"Heatmap saved to {output}")
     
-    if show:
+    if show and matplotlib.get_backend().lower() != "agg":
         plt.show()
         
     plt.close(fig)

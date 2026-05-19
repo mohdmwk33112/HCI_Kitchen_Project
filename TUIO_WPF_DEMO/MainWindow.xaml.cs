@@ -250,8 +250,11 @@ namespace TUIO_WPF_DEMO
                 string[] parts = message.Split(';');
                 if (parts.Length > 2)
                 {
+                    int suggId = int.Parse(parts[1]);
                     string suggName = parts[2];
+                    string suggType = parts.Length > 3 ? parts[3] : "TODAY'S";
                     ContextDisplay.Text = $"Context: I suggest making {suggName}. Scan TUIO to begin!";
+                    HighlightSuggestedRecipe(suggId, suggType);
                 }
             }
             else if (message.StartsWith("login_failed"))
@@ -322,6 +325,8 @@ namespace TUIO_WPF_DEMO
                 _isCooking = false;
 
                 if (ingredientListPanel != null) ingredientListPanel.Children.Clear();
+
+                HighlightSuggestedRecipe(0); // Clear suggestions on logout
 
                 // Return to initial centered state
                 _userSide = "Center";
@@ -1264,6 +1269,46 @@ namespace TUIO_WPF_DEMO
 
             Border[] bars = { Bar1, Bar2, Bar3, Bar4 };
             foreach (var b in bars) if (b != null) b.Width = 0;
+        }
+
+        private void HighlightSuggestedRecipe(int suggestedId, string suggType = "")
+        {
+            Border[] cards = { RecipeCard1, RecipeCard2, RecipeCard3, RecipeCard4 };
+            Border[] badges = { SuggBadge1, SuggBadge2, SuggBadge3, SuggBadge4 };
+            TextBlock[] textBlocks = { SuggText1, SuggText2, SuggText3, SuggText4 };
+            Brush defaultBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#EEEEEE"));
+
+            for (int i = 0; i < cards.Length; i++)
+            {
+                if (cards[i] != null)
+                {
+                    cards[i].BorderBrush = defaultBrush;
+                    cards[i].BorderThickness = new Thickness(2);
+                }
+                if (badges[i] != null)
+                {
+                    badges[i].Visibility = Visibility.Collapsed;
+                }
+            }
+
+            int index = suggestedId - 1;
+            if (index >= 0 && index < cards.Length)
+            {
+                if (cards[index] != null)
+                {
+                    Brush highlightBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F39C12"));
+                    cards[index].BorderBrush = highlightBrush;
+                    cards[index].BorderThickness = new Thickness(5);
+                }
+                if (badges[index] != null)
+                {
+                    if (textBlocks[index] != null && !string.IsNullOrEmpty(suggType))
+                    {
+                        textBlocks[index].Text = $"✨ {suggType.ToUpper()} SUGGESTION";
+                    }
+                    badges[index].Visibility = Visibility.Visible;
+                }
+            }
         }
 
         private void CheckHomeSelection(float normX, float normY)

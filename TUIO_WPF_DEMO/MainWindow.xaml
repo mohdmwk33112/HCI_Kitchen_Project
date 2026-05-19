@@ -114,12 +114,15 @@
                     <!-- Recipe 1 -->
                     <Border x:Name="RecipeCard1" Style="{StaticResource RecipeCardStyle}" Tag="1">
                         <StackPanel>
-                            <Border Background="#FFF3E0" CornerRadius="10" Height="140" Margin="0,0,0,15">
-                                <TextBlock Text="🍳" FontSize="60" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Border x:Name="SuggBadge1" Visibility="Collapsed" Background="#FFF3CD" BorderBrush="#F39C12" BorderThickness="1" CornerRadius="5" Padding="8,3" Margin="0,0,0,10" HorizontalAlignment="Center">
+                                <TextBlock x:Name="SuggText1" Text="✨ TODAY'S SUGGESTION" Foreground="#856404" FontSize="10" FontWeight="Bold"/>
+                            </Border>
+                            <Border Background="#FFF3E0" CornerRadius="10" Height="130" Margin="0,0,0,10">
+                                <TextBlock Text="🍳" FontSize="50" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <TextBlock Text="OMELETTE" Foreground="#2C3E50" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center"/>
                             <TextBlock Text="Breakfast • 10m" Foreground="#95A5A6" FontSize="14" HorizontalAlignment="Center" Margin="0,5,0,0"/>
-                            <Border x:Name="Progress1" Height="4" Background="#ECF0F1" Margin="0,20,0,0" CornerRadius="2">
+                            <Border x:Name="Progress1" Height="4" Background="#ECF0F1" Margin="0,15,0,0" CornerRadius="2">
                                 <Border x:Name="Bar1" Width="0" Background="#F39C12" HorizontalAlignment="Left" CornerRadius="2"/>
                             </Border>
                         </StackPanel>
@@ -127,12 +130,15 @@
                     <!-- Recipe 2 -->
                     <Border x:Name="RecipeCard2" Style="{StaticResource RecipeCardStyle}" Tag="2">
                         <StackPanel>
-                            <Border Background="#E8F5E9" CornerRadius="10" Height="140" Margin="0,0,0,15">
-                                <TextBlock Text="🍕" FontSize="60" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Border x:Name="SuggBadge2" Visibility="Collapsed" Background="#FFF3CD" BorderBrush="#F39C12" BorderThickness="1" CornerRadius="5" Padding="8,3" Margin="0,0,0,10" HorizontalAlignment="Center">
+                                <TextBlock x:Name="SuggText2" Text="✨ TODAY'S SUGGESTION" Foreground="#856404" FontSize="10" FontWeight="Bold"/>
+                            </Border>
+                            <Border Background="#E8F5E9" CornerRadius="10" Height="130" Margin="0,0,0,10">
+                                <TextBlock Text="🍕" FontSize="50" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <TextBlock Text="PIZZA" Foreground="#2C3E50" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center"/>
                             <TextBlock Text="Lunch • 25m" Foreground="#95A5A6" FontSize="14" HorizontalAlignment="Center" Margin="0,5,0,0"/>
-                            <Border x:Name="Progress2" Height="4" Background="#ECF0F1" Margin="0,20,0,0" CornerRadius="2">
+                            <Border x:Name="Progress2" Height="4" Background="#ECF0F1" Margin="0,15,0,0" CornerRadius="2">
                                 <Border x:Name="Bar2" Width="0" Background="#27AE60" HorizontalAlignment="Left" CornerRadius="2"/>
                             </Border>
                         </StackPanel>
@@ -140,12 +146,15 @@
                     <!-- Recipe 3 -->
                     <Border x:Name="RecipeCard3" Style="{StaticResource RecipeCardStyle}" Tag="3">
                         <StackPanel>
-                            <Border Background="#E3F2FD" CornerRadius="10" Height="140" Margin="0,0,0,15">
-                                <TextBlock Text="🍝" FontSize="60" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Border x:Name="SuggBadge3" Visibility="Collapsed" Background="#FFF3CD" BorderBrush="#F39C12" BorderThickness="1" CornerRadius="5" Padding="8,3" Margin="0,0,0,10" HorizontalAlignment="Center">
+                                <TextBlock x:Name="SuggText3" Text="✨ TODAY'S SUGGESTION" Foreground="#856404" FontSize="10" FontWeight="Bold"/>
+                            </Border>
+                            <Border Background="#E3F2FD" CornerRadius="10" Height="130" Margin="0,0,0,10">
+                                <TextBlock Text="🍝" FontSize="50" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <TextBlock Text="PASTA" Foreground="#2C3E50" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center"/>
                             <TextBlock Text="Dinner • 20m" Foreground="#95A5A6" FontSize="14" HorizontalAlignment="Center" Margin="0,5,0,0"/>
-                            <Border x:Name="Progress3" Height="4" Background="#ECF0F1" Margin="0,20,0,0" CornerRadius="2">
+                            <Border x:Name="Progress3" Height="4" Background="#ECF0F1" Margin="0,15,0,0" CornerRadius="2">
                                 <Border x:Name="Bar3" Width="0" Background="#2980B9" HorizontalAlignment="Left" CornerRadius="2"/>
                             </Border>
                         </StackPanel>
@@ -153,12 +162,15 @@
                     <!-- Recipe 4 -->
                     <Border x:Name="RecipeCard4" Style="{StaticResource RecipeCardStyle}" Tag="4">
                         <StackPanel>
-                            <Border Background="#FCE4EC" CornerRadius="10" Height="140" Margin="0,0,0,15">
-                                <TextBlock Text="🍰" FontSize="60" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Border x:Name="SuggBadge4" Visibility="Collapsed" Background="#FFF3CD" BorderBrush="#F39C12" BorderThickness="1" CornerRadius="5" Padding="8,3" Margin="0,0,0,10" HorizontalAlignment="Center">
+                                <TextBlock x:Name="SuggText4" Text="✨ TODAY'S SUGGESTION" Foreground="#856404" FontSize="10" FontWeight="Bold"/>
+                            </Border>
+                            <Border Background="#FCE4EC" CornerRadius="10" Height="130" Margin="0,0,0,10">
+                                <TextBlock Text="🍰" FontSize="50" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <TextBlock Text="CAKE" Foreground="#2C3E50" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center"/>
                             <TextBlock Text="Dessert • 45m" Foreground="#95A5A6" FontSize="14" HorizontalAlignment="Center" Margin="0,5,0,0"/>
-                            <Border x:Name="Progress4" Height="4" Background="#ECF0F1" Margin="0,20,0,0" CornerRadius="2">
+                            <Border x:Name="Progress4" Height="4" Background="#ECF0F1" Margin="0,15,0,0" CornerRadius="2">
                                 <Border x:Name="Bar4" Width="0" Background="#D81B60" HorizontalAlignment="Left" CornerRadius="2"/>
                             </Border>
                         </StackPanel>

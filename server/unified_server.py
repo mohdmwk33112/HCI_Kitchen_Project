@@ -128,10 +128,15 @@ def handle_client():
             elif cmd == "GET_SUGGESTION":
                 from datetime import datetime
                 hour = datetime.now().hour
-                if 5 <= hour < 12: sugg_id, sugg_name = 1, "Omelette"
-                elif 12 <= hour < 21: sugg_id, sugg_name = 2, "Pizza"
-                else: sugg_id, sugg_name = 4, "Cake"
-                conn_obj.sendall(f"suggestion;{sugg_id};{sugg_name}\n".encode("utf-8"))
+                if 5 <= hour < 12:
+                    sugg_id, sugg_name, sugg_type = 1, "Omelette", "BREAKFAST"
+                elif 12 <= hour < 17:
+                    sugg_id, sugg_name, sugg_type = 2, "Pizza", "LUNCH"
+                elif 17 <= hour < 22:
+                    sugg_id, sugg_name, sugg_type = 3, "Pasta", "DINNER"
+                else:
+                    sugg_id, sugg_name, sugg_type = 4, "Cake", "DESSERT"
+                conn_obj.sendall(f"suggestion;{sugg_id};{sugg_name};{sugg_type}\n".encode("utf-8"))
 
             elif cmd == "RECIPE_ID":
                 # Note: send_recipe takes over the receive_messages loop until recipe is done
@@ -159,7 +164,11 @@ def handle_client():
     except Exception as e:
         print(f"Session error: {e}")
     finally:
-        vision.running = False
+        if 'vision' in locals() and vision.current_user:
+            print(f"[Server] Client disconnected abruptly. Saving session data for {vision.current_user}...")
+            vision.set_state("LOGIN")
+        if 'vision' in locals():
+            vision.running = False
         conn_obj.close()
         server.close()
         print("Connection closed.")

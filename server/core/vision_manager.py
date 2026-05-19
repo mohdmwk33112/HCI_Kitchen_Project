@@ -73,9 +73,12 @@ class VisionManager:
                     # Save heatmap data to CSV
                     log_path = self.gaze_handler.save_log(self.current_user)
                     
-                    # Generate heatmap in a background thread
+                    # Generate heatmap synchronously to ensure completion before shutdown
                     if log_path:
-                        threading.Thread(target=generate_heatmap, args=(log_path,), daemon=True).start()
+                        try:
+                            generate_heatmap(log_path)
+                        except Exception as e:
+                            print(f"[VisionManager] Error generating heatmap: {e}")
                     
                     # DB LOGGING: Log gaze result if in session
                     if self.current_session_id:
