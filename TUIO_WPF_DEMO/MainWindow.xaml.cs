@@ -55,6 +55,7 @@ namespace TUIO_WPF_DEMO
         private bool _hadPositiveEmotion = false;
         private string _lastSentEmotion = "neutral";
         private DateTime _lastEmotionTime = DateTime.MinValue;
+        private DateTime _lastRotationTime = DateTime.MinValue;
         private string _userSkillLevel = "Chef"; // "Chef" or "Home Cook"
         // --- Keyboard State Management ---
         private bool _isKeyboardOpen = false;
@@ -700,29 +701,41 @@ namespace TUIO_WPF_DEMO
                     // NAVIGATION: If already cooking, use rotation for steps
                     if (_isCooking && StepPanel.Visibility == Visibility.Visible)
                     {
-                        if (o.RotationSpeed > 2.5f)
-                        { // Fast flick Right
-                            SendToServer("NEXT");
-                            System.Diagnostics.Debug.WriteLine("Next Step via TUIO Rotation");
-                        }
-                        else if (o.RotationSpeed < -2.5f)
-                        { // Fast flick Left
-                            SendToServer("PREV");
-                            System.Diagnostics.Debug.WriteLine("Prev Step via TUIO Rotation");
+                        if ((DateTime.Now - _lastRotationTime).TotalSeconds >= 1.0)
+                        {
+                            if (o.RotationSpeed > 0.6f)
+                            { // Flick Right
+                                _lastRotationTime = DateTime.Now;
+                                SendToServer("NEXT");
+                                System.Diagnostics.Debug.WriteLine("Next Step via TUIO Rotation");
+                            }
+                            else if (o.RotationSpeed < -0.6f)
+                            { // Flick Left
+                                _lastRotationTime = DateTime.Now;
+                                SendToServer("PREV");
+                                System.Diagnostics.Debug.WriteLine("Prev Step via TUIO Rotation");
+                            }
                         }
                     }
                     // If user rotates RIGHT, confirm recipe and start steps
-                    else if (o.RotationSpeed > 1.8f && !_isCooking && RecipePanel.Visibility == Visibility.Visible)
+                    else if (!_isCooking && RecipePanel.Visibility == Visibility.Visible)
                     {
-                        SendToServer("CONFIRM");
-                        _isCooking = true;
-                        System.Diagnostics.Debug.WriteLine("Recipe Confirmed via TUIO Rotation");
-                    }
-                    // If user rotates LEFT, cancel recipe selection
-                    else if (o.RotationSpeed < -1.8f && !_isCooking && RecipePanel.Visibility == Visibility.Visible)
-                    {
-                        CancelRecipe();
-                        System.Diagnostics.Debug.WriteLine("Recipe Cancelled via TUIO Rotation");
+                        if ((DateTime.Now - _lastRotationTime).TotalSeconds >= 1.0)
+                        {
+                            if (o.RotationSpeed > 0.5f)
+                            {
+                                _lastRotationTime = DateTime.Now;
+                                SendToServer("CONFIRM");
+                                _isCooking = true;
+                                System.Diagnostics.Debug.WriteLine("Recipe Confirmed via TUIO Rotation");
+                            }
+                            else if (o.RotationSpeed < -0.5f)
+                            {
+                                _lastRotationTime = DateTime.Now;
+                                CancelRecipe();
+                                System.Diagnostics.Debug.WriteLine("Recipe Cancelled via TUIO Rotation");
+                            }
+                        }
                     }
                 }
             });
